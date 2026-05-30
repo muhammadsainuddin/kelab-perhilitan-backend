@@ -1,0 +1,457 @@
+<!DOCTYPE html>
+<html lang="ms">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>AIGEO | Portal Akses Rasmi</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --primary-color: #0F4C3A; 
+            --primary-light: #166b52;
+            --bg-color: #F3F4F6; 
+            --text-main: #111827;
+            --text-muted: #6B7280;
+            --border-color: #E5E7EB;
+            --input-bg: #F9FAFB;
+        }
+
+        /* Base Body (Background Desktop) */
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: var(--bg-color);
+            background-image: radial-gradient(#cbd5e1 1px, transparent 1px);
+            background-size: 20px 20px;
+            color: var(--text-main);
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: flex-start; /* Ubah ke flex-start untuk mobile */
+            min-height: 100vh;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        /* =========================================
+           REKA BENTUK MOBILE-FIRST (Lalai)
+           Kelihatan seperti aplikasi telefon penuh
+           ========================================= */
+        .portal-container {
+            width: 100%;
+            min-height: 100vh;
+            background: #ffffff;
+            display: flex;
+            flex-direction: column;
+            box-shadow: none;
+            border-radius: 0;
+        }
+
+        /* Header Portal */
+        .portal-header {
+            background: linear-gradient(135deg, var(--primary-color) 0%, var(--primary-light) 100%);
+            padding: 40px 20px 30px;
+            text-align: center;
+            color: white;
+            border-bottom-left-radius: 20px;
+            border-bottom-right-radius: 20px;
+            box-shadow: 0 4px 15px rgba(15, 76, 58, 0.2);
+        }
+
+        .portal-logo {
+            width: 65px;
+            height: 65px;
+            background-color: #ffffff;
+            color: var(--primary-color);
+            border-radius: 50%;
+            display: inline-flex;
+            justify-content: center;
+            align-items: center;
+            font-size: 24px;
+            font-weight: 800;
+            letter-spacing: 1px;
+            margin-bottom: 15px;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.1);
+        }
+
+        .portal-header h1 {
+            margin: 0;
+            font-size: 24px;
+            font-weight: 700;
+            letter-spacing: 0.5px;
+        }
+
+        .portal-header p {
+            margin: 5px 0 0;
+            font-size: 13px;
+            opacity: 0.9;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        /* Navigasi Tab (Scrollable di Mobile) */
+        .portal-tabs {
+            display: flex;
+            border-bottom: 1px solid var(--border-color);
+            background: #ffffff;
+            overflow-x: auto;
+            scrollbar-width: none; /* Firefox */
+        }
+        .portal-tabs::-webkit-scrollbar { display: none; /* Chrome/Safari */ }
+
+        .tab-btn {
+            flex: 1;
+            min-width: 110px;
+            padding: 18px 10px;
+            background: none;
+            border: none;
+            border-bottom: 3px solid transparent;
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--text-muted);
+            cursor: pointer;
+            transition: all 0.3s ease;
+            white-space: nowrap;
+        }
+
+        .tab-btn.active {
+            color: var(--primary-color);
+            border-bottom-color: var(--primary-color);
+        }
+
+        /* Kandungan Utama */
+        .portal-body {
+            padding: 25px 20px;
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .view {
+            display: none;
+            animation: slideUp 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+        .view.active { display: block; }
+
+        @keyframes slideUp {
+            from { opacity: 0; transform: translateY(15px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        /* Reka Bentuk Borang Moden */
+        .form-group { margin-bottom: 20px; }
+        
+        .form-group label {
+            display: block;
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--text-muted);
+            margin-bottom: 8px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .form-group input, .form-group select {
+            width: 100%;
+            padding: 15px; /* Besar untuk sentuhan jari */
+            border: 1.5px solid var(--border-color);
+            border-radius: 10px; /* Bucu membulat moden */
+            box-sizing: border-box;
+            font-size: 15px;
+            font-family: 'Inter', sans-serif;
+            transition: all 0.2s ease;
+            background-color: var(--input-bg);
+            color: var(--text-main);
+        }
+
+        .form-group input:focus, .form-group select:focus {
+            outline: none;
+            border-color: var(--primary-color);
+            background-color: #ffffff;
+            box-shadow: 0 0 0 4px rgba(15, 76, 58, 0.1);
+        }
+
+        .btn-submit {
+            width: 100%;
+            padding: 16px;
+            background-color: var(--primary-color);
+            color: #ffffff;
+            border: none;
+            border-radius: 10px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            margin-top: 10px;
+            box-shadow: 0 4px 12px rgba(15, 76, 58, 0.2);
+        }
+
+        .btn-submit:hover {
+            background-color: var(--primary-light);
+            transform: translateY(-1px);
+        }
+        
+        .btn-submit:active {
+            transform: translateY(1px);
+        }
+
+        /* Konsol Developer */
+        .dev-console {
+            margin-top: auto; /* Tolak ke bawah */
+            padding-top: 30px;
+        }
+
+        .dev-console-container {
+            background: #111827;
+            border-radius: 10px;
+            overflow: hidden;
+        }
+
+        .dev-console-header {
+            background: #1F2937;
+            padding: 10px 15px;
+            font-size: 11px;
+            color: #9CA3AF;
+            font-weight: 600;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .dev-console-body {
+            padding: 15px;
+            font-family: 'Courier New', Courier, monospace;
+            font-size: 12px;
+            color: #10B981;
+            max-height: 120px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+
+        /* Footer */
+        .portal-footer {
+            text-align: center;
+            padding: 20px;
+            font-size: 12px;
+            color: var(--text-muted);
+            margin-top: 20px;
+        }
+
+
+        /* =========================================
+           REKA BENTUK DESKTOP & TABLET
+           Berubah menjadi kad terapung secara automatik
+           ========================================= */
+        @media (min-width: 640px) {
+            body {
+                align-items: center; /* Ketengahkan kad pada skrin besar */
+                padding: 40px 20px;
+            }
+
+            .portal-container {
+                min-height: auto;
+                max-width: 480px;
+                border-radius: 16px; /* Bucu kad membulat */
+                box-shadow: 0 20px 40px rgba(0, 0, 0, 0.08); /* Bayang elegan */
+                overflow: hidden;
+            }
+
+            .portal-header {
+                border-bottom-left-radius: 0;
+                border-bottom-right-radius: 0;
+                padding: 40px 20px;
+            }
+
+            .portal-body {
+                padding: 35px 40px;
+            }
+        }
+    </style>
+</head>
+<body>
+
+    <div class="portal-container">
+        <div class="portal-header">
+            <div class="portal-logo">AG</div>
+            <h1>Portal Rasmi AIGEO</h1>
+            <p>Sistem Teras Kecerdasan Ekologi</p>
+        </div>
+
+        <div class="portal-tabs">
+            <button class="tab-btn active" onclick="switchTab('login')">Log Masuk</button>
+            <button class="tab-btn" onclick="switchTab('register')">Pendaftaran</button>
+            <button class="tab-btn" onclick="switchTab('forgot')">Reset Akses</button>
+        </div>
+
+        <div class="portal-body">
+            <div id="view-login" class="view active">
+                <form id="loginForm">
+                    <div class="form-group">
+                        <label>ALAMAT E-MEL RASMI</label>
+                        <input type="email" id="logEmail" placeholder="cth: nama@tnpp.gov.my" required>
+                    </div>
+                    <div class="form-group">
+                        <label>KATA LALUAN</label>
+                        <input type="password" id="logPassword" placeholder="••••••••" required>
+                    </div>
+                    <button type="submit" class="btn-submit">Log Masuk / Jana Token</button>
+                </form>
+            </div>
+
+            <div id="view-register" class="view">
+                <form id="registerForm">
+                    <div class="form-group">
+                        <label>NAMA PENUH</label>
+                        <input type="text" id="regName" placeholder="Seperti kad pengenalan" required>
+                    </div>
+                    <div class="form-group">
+                        <label>ALAMAT E-MEL RASMI</label>
+                        <input type="email" id="regEmail" placeholder="cth: nama@tnpp.gov.my" required>
+                    </div>
+                    <div class="form-group">
+                        <label>KATA LALUAN BAHARU</label>
+                        <input type="password" id="regPassword" placeholder="Cipta kata laluan yang kukuh" required>
+                    </div>
+                    <div class="form-group">
+                        <label>PERANAN PENGGUNA (ROLE)</label>
+                        <select id="regRole" required>
+                            <option value="" disabled selected>Pilih Peranan...</option>
+                            <option value="Anggota">Anggota Lapangan</option>
+                            <option value="Penyelia">Penyelia Operasi</option>
+                            <option value="Admin">Pentadbir Sistem (Admin)</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>STESEN BERTUGAS</label>
+                        <input type="text" id="regNegeri" placeholder="Cth: Ibu Pejabat / Pahang" required>
+                    </div>
+                    <button type="submit" class="btn-submit">Daftar Akaun Baharu</button>
+                </form>
+            </div>
+
+            <div id="view-forgot" class="view">
+                <p style="font-size: 14px; color: var(--text-muted); margin-top: 0; margin-bottom: 25px; line-height: 1.6;">
+                    Sila masukkan e-mel rasmi yang didaftarkan. Pautan untuk menetapkan semula kata laluan akan dihantar ke peti masuk anda.
+                </p>
+                <form id="forgotForm">
+                    <div class="form-group">
+                        <label>ALAMAT E-MEL RASMI</label>
+                        <input type="email" id="forgotEmail" placeholder="cth: nama@tnpp.gov.my" required>
+                    </div>
+                    <button type="submit" class="btn-submit">Mohon Reset Akses</button>
+                </form>
+            </div>
+
+            <div class="dev-console">
+                <div class="dev-console-container">
+                    <div class="dev-console-header">
+                        <span>API RESPONSE LOG</span>
+                        <span id="statusCodeBadge" style="background: #374151; padding: 3px 8px; border-radius: 4px; letter-spacing: 1px;">SIAP SEDIA</span>
+                    </div>
+                    <div class="dev-console-body" id="apiOutput">Menunggu arahan...</div>
+                </div>
+                
+                <div class="portal-footer">
+                    &copy; 2026 AIGEO (aigeo.my)<br>Hak Cipta Terpelihara.
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_URL = 'http://localhost:5000/api/auth'; 
+        
+        const outputEl = document.getElementById('apiOutput');
+        const statusBadge = document.getElementById('statusCodeBadge');
+
+        function switchTab(tabName) {
+            document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+            document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+            
+            document.getElementById(`view-${tabName}`).classList.add('active');
+            event.target.classList.add('active');
+            
+            outputEl.innerText = "Menunggu arahan...";
+            statusBadge.innerText = "SIAP SEDIA";
+            statusBadge.style.color = "#9CA3AF";
+        }
+
+        function printOutput(data, statusCode) {
+            statusBadge.innerText = `HTTP ${statusCode}`;
+            statusBadge.style.color = statusCode >= 400 ? '#EF4444' : '#10B981';
+            
+            outputEl.style.color = statusCode >= 400 ? '#FCA5A5' : '#10B981';
+            outputEl.innerHTML = JSON.stringify(data, null, 2);
+        }
+
+        document.getElementById('registerForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            outputEl.innerText = "Memproses...";
+            statusBadge.innerText = "PROCESSING";
+            
+            const payload = {
+                name: document.getElementById('regName').value,
+                email: document.getElementById('regEmail').value,
+                password: document.getElementById('regPassword').value,
+                role: document.getElementById('regRole').value,
+                negeri: document.getElementById('regNegeri').value
+            };
+
+            try {
+                const response = await fetch(`${API_URL}/register`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                const data = await response.json();
+                printOutput(data, response.status);
+            } catch (err) {
+                printOutput({ error: err.message }, 500);
+            }
+        });
+
+        document.getElementById('loginForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            outputEl.innerText = "Mengesahkan...";
+            statusBadge.innerText = "PROCESSING";
+            
+            const payload = {
+                email: document.getElementById('logEmail').value,
+                password: document.getElementById('logPassword').value
+            };
+
+            try {
+                const response = await fetch(`${API_URL}/login`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                const data = await response.json();
+                printOutput(data, response.status);
+            } catch (err) {
+                printOutput({ error: err.message }, 500);
+            }
+        });
+
+        document.getElementById('forgotForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            outputEl.innerText = "Menghantar E-mel...";
+            statusBadge.innerText = "PROCESSING";
+            
+            const payload = { email: document.getElementById('forgotEmail').value };
+
+            try {
+                const response = await fetch(`${API_URL}/forgot-password`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                const data = await response.json();
+                printOutput(data, response.status);
+            } catch (err) {
+                printOutput({ error: err.message }, 500);
+            }
+        });
+    </script>
+</body>
+</html>
