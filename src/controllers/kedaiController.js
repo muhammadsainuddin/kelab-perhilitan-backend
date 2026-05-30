@@ -1,82 +1,11 @@
 import db from '../config/db.js';
-import axios from 'axios';
-
-const TOYYIBPAY_URL = 'https://dev.toyyibpay.com/index.php/api/createBill';
-const SECRET_KEY    = process.env.SECRET_KEY    || 'g0jw4dtf-1mgf-l4au-les2-se8kpdg9beoe';
-const CATEGORY_CODE = process.env.CATEGORY_CODE || 'v4vftvzw';
+import { janaBilFPX } from '../utils/toyyibpay.js';
 
 // ============================================================
-// HELPER: pastikan jadual & kolum wujud (auto-migrate)
-// ============================================================
-const pastikanJadual = async () => {
-    await db.query(`
-        CREATE TABLE IF NOT EXISTS produk_kedai (
-            id           INT AUTO_INCREMENT PRIMARY KEY,
-            nama_produk  VARCHAR(150) NOT NULL,
-            deskripsi    TEXT,
-            harga        DECIMAL(10,2) NOT NULL DEFAULT 0.00,
-            stok_semasa  INT NOT NULL DEFAULT 0,
-            gambar       VARCHAR(255) DEFAULT NULL,
-            gambar_galeri TEXT DEFAULT NULL,
-            saiz_tersedia VARCHAR(150) DEFAULT NULL,
-            is_percuma   TINYINT(1) NOT NULL DEFAULT 0,
-            is_preorder  TINYINT(1) NOT NULL DEFAULT 0,
-            tarikh_tutup_preorder DATE DEFAULT NULL,
-            is_variasi   TINYINT(1) NOT NULL DEFAULT 0,
-            variasi_data TEXT DEFAULT NULL,
-            status       ENUM('AKTIF','HABIS') NOT NULL DEFAULT 'AKTIF',
-            tarikh_cipta DATETIME DEFAULT CURRENT_TIMESTAMP
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-    `);
-    
-    // Tambah kolum jika jadual lama belum ada (abai error jika dah wujud)
-    const kolumBaharu = [
-        "ADD COLUMN gambar_galeri TEXT DEFAULT NULL",
-        "ADD COLUMN saiz_tersedia VARCHAR(150) DEFAULT NULL",
-        "ADD COLUMN is_percuma TINYINT(1) NOT NULL DEFAULT 0",
-        "ADD COLUMN is_preorder TINYINT(1) NOT NULL DEFAULT 0",
-        "ADD COLUMN tarikh_tutup_preorder DATE DEFAULT NULL",
-        "ADD COLUMN is_variasi TINYINT(1) NOT NULL DEFAULT 0",
-        "ADD COLUMN variasi_data TEXT DEFAULT NULL"
-    ];
-    for (const k of kolumBaharu) {
-        try { await db.query(`ALTER TABLE produk_kedai ${k}`); } catch (e) { /* kolum dah wujud */ }
-    }
-
-    await db.query(`
-        CREATE TABLE IF NOT EXISTS pesanan_kedai (
-            id                 INT AUTO_INCREMENT PRIMARY KEY,
-            no_kp              VARCHAR(20) NOT NULL COLLATE utf8mb4_unicode_ci,
-            billCode           VARCHAR(100) DEFAULT NULL,
-            jumlah_keseluruhan DECIMAL(10,2) NOT NULL DEFAULT 0.00,
-            is_percuma         TINYINT(1) NOT NULL DEFAULT 0,
-            status_pesanan     ENUM('PENDING','DIBAYAR','DIPROSES','SELESAI','DIBATALKAN') NOT NULL DEFAULT 'PENDING',
-            nota_admin         TEXT DEFAULT NULL,
-            tarikh_pesanan     DATETIME DEFAULT CURRENT_TIMESTAMP
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-    `);
-    try { await db.query("ALTER TABLE pesanan_kedai ADD COLUMN is_percuma TINYINT(1) NOT NULL DEFAULT 0"); } catch(e){}
-
-    await db.query(`
-        CREATE TABLE IF NOT EXISTS item_pesanan (
-            id           INT AUTO_INCREMENT PRIMARY KEY,
-            pesanan_id   INT NOT NULL,
-            produk_id    INT NOT NULL,
-            kuantiti     INT NOT NULL DEFAULT 1,
-            saiz         VARCHAR(150) DEFAULT NULL,
-            harga_seunit DECIMAL(10,2) NOT NULL DEFAULT 0.00
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-    `);
-    try { await db.query("ALTER TABLE item_pesanan ADD COLUMN saiz VARCHAR(150) DEFAULT NULL"); } catch(e){}
-    try { await db.query("ALTER TABLE item_pesanan MODIFY COLUMN saiz VARCHAR(150) DEFAULT NULL"); } catch(e){} // Lebarkan saiz untuk muat teks variasi
-};
-
-// ============================================================
-// ── ADMIN: PRODUK
+// ── ADMIN: PENGURUSAN PRODUK
 // ============================================================
 export const senaraiProduk = async (req, res) => {
     try {
-        await pastikanJadual();
         const [rows] = await db.query(`
             SELECT id, nama_produk, deskripsi, harga, stok_semasa, gambar, gambar_galeri,
                    saiz_tersedia, is_percuma, is_preorder, tarikh_tutup_preorder, 
@@ -94,8 +23,6 @@ export const senaraiProduk = async (req, res) => {
 
 export const tambahProduk = async (req, res) => {
     try {
-        await pastikanJadual();
-
         const { nama_produk, deskripsi, harga, stok_semasa, saiz_tersedia,
                 is_percuma, is_preorder, tarikh_tutup_preorder, is_variasi, variasi_data } = req.body;
 
@@ -144,7 +71,6 @@ export const tambahProduk = async (req, res) => {
 
 export const kemaskiniProduk = async (req, res) => {
     try {
-        await pastikanJadual();
         const { id } = req.params;
         const { nama_produk, deskripsi, harga, stok_semasa, status, saiz_tersedia,
                 is_percuma, is_preorder, tarikh_tutup_preorder, is_variasi, variasi_data } = req.body;
@@ -208,11 +134,10 @@ export const padamProduk = async (req, res) => {
 };
 
 // ============================================================
-// ── AHLI: senarai produk aktif
+// ── AHLI: SENARAI PRODUK AKTIF (UNTUK DIPAPARKAN DI KEDAI)
 // ============================================================
 export const senaraiProdukAktif = async (req, res) => {
     try {
-        await pastikanJadual();
         const [rows] = await db.query(`
             SELECT id, nama_produk, deskripsi, harga, stok_semasa, gambar, gambar_galeri,
                    saiz_tersedia, is_percuma, is_preorder, tarikh_tutup_preorder, 
@@ -229,11 +154,10 @@ export const senaraiProdukAktif = async (req, res) => {
 };
 
 // ============================================================
-// ── ADMIN: PESANAN
+// ── ADMIN: PENGURUSAN PESANAN AHLI
 // ============================================================
 export const senaraiPesanan = async (req, res) => {
     try {
-        await pastikanJadual();
         const [pesanan] = await db.query(`
             SELECT p.id, p.no_kp, u.nama_pegawai AS nama_ahli,
                    p.billCode, p.jumlah_keseluruhan, p.is_percuma, p.status_pesanan, p.nota_admin,
@@ -277,8 +201,8 @@ export const kemaskiniStatusPesanan = async (req, res) => {
 };
 
 // ============================================================
-// ── AHLI: BUAT PESANAN
-//    Body: { items: [{ produk_id, kuantiti, saiz }] }
+// ── AHLI: BUAT PESANAN (Bayar melalui FPX atau Terus Selesai)
+//    Body format: { items: [{ produk_id, kuantiti, saiz }] }
 // ============================================================
 export const buatPesanan = async (req, res) => {
     const no_kp = req.user.no_kp;
@@ -297,9 +221,7 @@ export const buatPesanan = async (req, res) => {
         const diproses = [];
 
         for (const item of items) {
-            const [[prod]] = await conn.query(
-                'SELECT * FROM produk_kedai WHERE id = ? FOR UPDATE', [item.produk_id]);
-
+            const [[prod]] = await conn.query('SELECT * FROM produk_kedai WHERE id = ? FOR UPDATE', [item.produk_id]);
             if (!prod) throw new Error(`Produk tidak wujud.`);
             if (prod.status !== 'AKTIF') throw new Error(`"${prod.nama_produk}" tidak dijual.`);
             
@@ -309,11 +231,9 @@ export const buatPesanan = async (req, res) => {
             if (prod.is_variasi) {
                 let vData = [];
                 try { vData = JSON.parse(prod.variasi_data || '[]'); } catch(e){}
-                
-                const chosenVar = vData.find(v => v.nama === item.saiz); // item.saiz pegang nama variasi
+                const chosenVar = vData.find(v => v.nama === item.saiz);
                 if (!chosenVar) throw new Error(`Pilihan "${item.saiz}" tidak sah untuk produk ini.`);
                 if (parseInt(chosenVar.stok) < item.kuantiti) throw new Error(`Stok variasi "${item.saiz}" tidak mencukupi.`);
-                
                 hargaSeunit = parseFloat(chosenVar.harga);
             } else {
                 if (prod.stok_semasa < item.kuantiti) throw new Error(`Stok "${prod.nama_produk}" tidak cukup.`);
@@ -327,8 +247,7 @@ export const buatPesanan = async (req, res) => {
                 const [[{ bil }]] = await conn.query(`
                     SELECT COUNT(*) AS bil FROM pesanan_kedai pk
                     JOIN item_pesanan ip ON ip.pesanan_id = pk.id
-                    WHERE pk.no_kp = ? AND ip.produk_id = ? 
-                    AND pk.status_pesanan NOT IN ('DIBATALKAN')
+                    WHERE pk.no_kp = ? AND ip.produk_id = ? AND pk.status_pesanan NOT IN ('DIBATALKAN')
                 `, [no_kp, prod.id]);
                 
                 if (bil > 0) throw new Error(`Anda telah menempah "${prod.nama_produk}" sebelum ini (had 1 per ahli).`);
@@ -338,18 +257,14 @@ export const buatPesanan = async (req, res) => {
             diproses.push({ ...prod, kuantiti: item.kuantiti, saiz: item.saiz || null, hargaFinal: hargaSeunit });
         }
 
-        const [pRes] = await conn.query(
-            'INSERT INTO pesanan_kedai (no_kp, jumlah_keseluruhan, is_percuma) VALUES (?, ?, ?)',
-            [no_kp, jumlah, adaPercuma ? 1 : 0]);
+        const [pRes] = await conn.query('INSERT INTO pesanan_kedai (no_kp, jumlah_keseluruhan, is_percuma) VALUES (?, ?, ?)', [no_kp, jumlah, adaPercuma ? 1 : 0]);
         const pesananId = pRes.insertId;
 
         for (const it of diproses) {
-            await conn.query(
-                'INSERT INTO item_pesanan (pesanan_id, produk_id, kuantiti, saiz, harga_seunit) VALUES (?, ?, ?, ?, ?)',
-                [pesananId, it.id, it.kuantiti, it.saiz, it.is_percuma ? 0 : it.hargaFinal]);
+            await conn.query('INSERT INTO item_pesanan (pesanan_id, produk_id, kuantiti, saiz, harga_seunit) VALUES (?, ?, ?, ?, ?)', [pesananId, it.id, it.kuantiti, it.saiz, it.is_percuma ? 0 : it.hargaFinal]);
         }
 
-        // ── Jika SEMUA percuma (jumlah=0): terus SELESAI, tolak stok, tiada FPX ──
+        // ── Tempahan Percuma Sepenuhnya (Tiada FPX, terus DIPROSES) ──
         if (jumlah <= 0) {
             await conn.query('UPDATE pesanan_kedai SET status_pesanan = "DIPROSES" WHERE id = ?', [pesananId]);
             for (const it of diproses) {
@@ -362,55 +277,35 @@ export const buatPesanan = async (req, res) => {
                         if (parseInt(v.stok) > 0) allZero = false;
                         return v;
                     });
-                    await conn.query('UPDATE produk_kedai SET variasi_data = ?, status = ? WHERE id = ?', 
-                        [JSON.stringify(vData), allZero ? 'HABIS' : 'AKTIF', it.id]);
+                    await conn.query('UPDATE produk_kedai SET variasi_data = ?, status = ? WHERE id = ?', [JSON.stringify(vData), allZero ? 'HABIS' : 'AKTIF', it.id]);
                 } else {
                     await conn.query('UPDATE produk_kedai SET stok_semasa = GREATEST(0, stok_semasa - ?) WHERE id = ?', [it.kuantiti, it.id]);
                     await conn.query('UPDATE produk_kedai SET status = "HABIS" WHERE id = ? AND stok_semasa = 0', [it.id]);
                 }
             }
             await conn.commit();
-            return res.status(201).json({
-                success: true, percuma: true, pesanan_id: pesananId,
-                message: 'Tempahan percuma berjaya direkodkan! Sila tunggu pengesahan admin.'
-            });
+            return res.status(201).json({ success: true, percuma: true, pesanan_id: pesananId, message: 'Tempahan percuma berjaya direkodkan! Sila tunggu pengesahan admin.' });
         }
 
-        // ── Ada bayaran: cipta bil FPX ──
+        // ── PANGGIL MODUL PUSAT TOYYIBPAY ──
         const [[ahli]] = await conn.query('SELECT nama_pegawai, emel, phone FROM users WHERE no_kp = ?', [no_kp]);
         const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
         const backendUrl  = process.env.BACKEND_URL  || 'http://localhost:5001';
 
-        const formData = new URLSearchParams({
-            userSecretKey: SECRET_KEY,
-            categoryCode:  CATEGORY_CODE,
-            billName:      `Pesanan#${pesananId}`,
-            billDescription: `Pesanan Kedai #${pesananId} - Kelab Perhilitan`,
-            billPriceSetting: 1,
-            billPayorInfo:    1,
-            billAmount:       Math.round(jumlah * 100),
-            billReturnUrl:    `${frontendUrl}/dashboard/kedai`,
-            billCallbackUrl:  `${backendUrl}/api/kedai/webhook/${pesananId}`,
-            billExternalReferenceNo: `KEDAI-${pesananId}`,
-            billTo:    ahli?.nama_pegawai || '',
-            billEmail: ahli?.emel || 'kelabperhilitan@gmail.com',
-            billPhone: ahli?.phone || '0123456789',
-            billSplitPayment: 0,
-            billPaymentChannel: 0,
+        const fpxData = await janaBilFPX({
+            keterangan: `Pesanan Kedai #${pesananId} - Kelab Perhilitan`,
+            amaun: jumlah,
+            returnUrl: `${frontendUrl}/dashboard/kedai`,
+            callbackUrl: `${backendUrl}/api/kedai/webhook/${pesananId}`,
+            referenceNo: `KEDAI-${pesananId}`,
+            user: ahli || {},
+            jenis: 'KEDAI'
         });
 
-        const fpxRes = await axios.post(TOYYIBPAY_URL, formData.toString(),
-            { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } });
-        const billCode = fpxRes.data[0]?.BillCode;
-        if (!billCode) throw new Error('Gagal mendapat BillCode dari ToyyibPay.');
-
-        await conn.query('UPDATE pesanan_kedai SET billCode = ? WHERE id = ?', [billCode, pesananId]);
+        await conn.query('UPDATE pesanan_kedai SET billCode = ? WHERE id = ?', [fpxData.billCode, pesananId]);
         await conn.commit();
 
-        return res.status(201).json({
-            success: true, percuma: false, pesanan_id: pesananId, billCode,
-            url_bayar: `https://dev.toyyibpay.com/${billCode}`
-        });
+        return res.status(201).json({ success: true, percuma: false, pesanan_id: pesananId, billCode: fpxData.billCode, url_bayar: fpxData.billUrl });
 
     } catch (err) {
         await conn.rollback();
@@ -464,12 +359,15 @@ export const webhookKedai = async (req, res) => {
             }
 
             try {
+                // Rekod masuk ke buku tunai
                 await conn.query(`
                     INSERT INTO transaksi_kewangan (jenis_aliran, kategori, amaun, rujukan, nota, no_kp_pihak)
                     VALUES ('MASUK','KEDAI',?,?,?,?)
                 `, [pesanan.jumlah_keseluruhan, billcode || pesanan.billCode,
                     `Jualan Kedai — Pesanan #${pesananId}`, pesanan.no_kp]);
-            } catch(e) { }
+            } catch(e) { 
+                // Abaikan ralat jika jadual kewangan tiada
+            }
             await conn.commit();
             return res.status(200).send('OK');
         } else {
@@ -486,6 +384,9 @@ export const webhookKedai = async (req, res) => {
     }
 };
 
+// ============================================================
+// ── SEMAK STATUS PESANAN (Untuk Paparan Ahli)
+// ============================================================
 export const semakPesanan = async (req, res) => {
     try {
         const [[p]] = await db.query(
@@ -494,6 +395,36 @@ export const semakPesanan = async (req, res) => {
         if (!p) return res.status(404).json({ success: false, message: 'Tidak dijumpai.' });
         return res.status(200).json({ success: true, data: p });
     } catch (err) {
-        return res.status(500).json({ success: false, message: 'Ralat menyemak.' });
+        return res.status(500).json({ success: false, message: 'Ralat menyemak pesanan.' });
+    }
+};
+
+// ============================================================
+// ── AHLI: LIHAT SEJARAH PESANAN (PESANAN SAYA)
+// ============================================================
+export const senaraiPesananAhli = async (req, res) => {
+    try {
+        const no_kp = req.user.no_kp;
+        const [pesanan] = await db.query(`
+            SELECT p.id, p.billCode, p.jumlah_keseluruhan, p.is_percuma, p.status_pesanan, p.nota_admin,
+                   DATE_FORMAT(p.tarikh_pesanan, '%d-%m-%Y %H:%i') AS tarikh_pesanan
+            FROM pesanan_kedai p
+            WHERE p.no_kp = ?
+            ORDER BY p.tarikh_pesanan DESC
+        `, [no_kp]);
+
+        for (const p of pesanan) {
+            const [items] = await db.query(`
+                SELECT i.kuantiti, i.saiz, i.harga_seunit, pr.nama_produk, pr.gambar, pr.gambar_galeri
+                FROM item_pesanan i
+                JOIN produk_kedai pr ON i.produk_id = pr.id
+                WHERE i.pesanan_id = ?
+            `, [p.id]);
+            p.items = items;
+        }
+        return res.status(200).json({ success: true, data: pesanan });
+    } catch (err) {
+        console.error('[KEDAI] senaraiPesananAhli:', err.message);
+        return res.status(500).json({ success: false, message: 'Gagal menarik senarai pesanan anda.' });
     }
 };

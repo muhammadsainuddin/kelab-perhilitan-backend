@@ -2,7 +2,7 @@ import express from 'express';
 import {
     senaraiProduk, tambahProduk, kemaskiniProduk, padamProduk,
     senaraiProdukAktif, senaraiPesanan, kemaskiniStatusPesanan,
-    buatPesanan, webhookKedai, semakPesanan,
+    buatPesanan, webhookKedai, semakPesanan, senaraiPesananAhli
 } from '../controllers/kedaiController.js';
 import { verifyToken, requireRole } from '../middleware/authMiddleware.js';
 import { upload } from '../middleware/uploadMiddleware.js';
@@ -17,6 +17,7 @@ router.use(verifyToken);
 router.get('/produk-aktif',     senaraiProdukAktif);   // paparan kedai ahli
 router.post('/beli',            buatPesanan);
 router.get('/semak/:pesananId', semakPesanan);
+router.get('/pesanan-saya', verifyToken, senaraiPesananAhli);
 
 // ── Admin sahaja (upload.array untuk pelbagai gambar - max 6) ──
 router.get('/admin/produk',             requireRole(['Admin','Super Admin']), senaraiProduk);

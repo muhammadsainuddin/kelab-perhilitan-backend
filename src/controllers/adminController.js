@@ -286,27 +286,46 @@ export const tambahStaffBulk = async (req, res) => {
     }
 };
 
+
 // ==========================================
-// 5. RESIT PEMBAYARAN
+// 5. RESIT PEMBAYARAN KESELURUHAN (ADMIN)
 // ==========================================
 export const getAllResitBayaran = async (req, res) => {
     try {
         const query = `
-            SELECT 
-                sb.id, sb.billCode, sb.amaun, sb.status, sb.keterangan, 
-                DATE_FORMAT(sb.tarikh_cipta, '%d-%m-%Y %h:%i %p') AS tarikh,
-                sb.tarikh_cipta, 
-                u.nama_pegawai AS nama_penuh, u.no_kp, 
-                u.emel AS email, u.phone AS no_tel, u.no_ahli
-            FROM sejarah_bayaran sb
-            LEFT JOIN users u ON sb.no_kp = u.no_kp
-            ORDER BY sb.tarikh_cipta DESC
+            SELECT billCode, amaun, status, keterangan, 
+                   DATE_FORMAT(tarikh_cipta, '%d-%m-%Y %h:%i %p') AS tarikh,
+                   tarikh_cipta, nama_penuh, no_kp, email, no_tel, no_ahli
+            FROM (
+                SELECT 
+                    sb.billCode, sb.amaun, sb.status, sb.keterangan, sb.tarikh_cipta,
+                    u.nama_pegawai AS nama_penuh, u.no_kp, u.emel AS email, u.phone AS no_tel, u.no_ahli
+                FROM sejarah_bayaran sb
+                LEFT JOIN users u ON sb.no_kp = u.no_kp
+                
+                UNION ALL
+                
+                SELECT 
+                    pk.billCode, pk.jumlah_keseluruhan AS amaun, 
+                    CASE 
+                        WHEN pk.status_pesanan IN ('DIBAYAR','DIPROSES','SELESAI') THEN 'BERJAYA'
+                        WHEN pk.status_pesanan = 'DIBATALKAN' THEN 'GAGAL'
+                        ELSE pk.status_pesanan 
+                    END AS status, 
+                    CONCAT('Pembelian Kedai (Pesanan #', pk.id, ')') AS keterangan, 
+                    pk.tarikh_pesanan AS tarikh_cipta,
+                    u.nama_pegawai AS nama_penuh, u.no_kp, u.emel AS email, u.phone AS no_tel, u.no_ahli
+                FROM pesanan_kedai pk
+                LEFT JOIN users u ON pk.no_kp = u.no_kp
+                WHERE pk.billCode IS NOT NULL
+            ) AS gabungan
+            ORDER BY tarikh_cipta DESC
         `;
         const [rows] = await db.query(query);
         res.status(200).json({ success: true, data: rows });
     } catch (error) {
         console.error("Ralat Resit Bayaran:", error);
-        res.status(500).json({ success: false, message: "Gagal menarik senarai resit." });
+        res.status(500).json({ success: false, message: "Gagal menarik senarai resit gabungan." });
     }
 };
 
