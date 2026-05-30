@@ -6,7 +6,6 @@ import bcrypt from 'bcryptjs';
 // ==========================================
 export const getMyProfile = async (req, res) => {
     const no_kp = req.user.no_kp;
-    const user_id = req.user.id;
 
     try {
         const query = `
@@ -15,6 +14,7 @@ export const getMyProfile = async (req, res) => {
                 u.nama_pegawai AS nama_penuh, 
                 u.gred_penyandang_sspa AS gred_sspa, 
                 p.nama_penempatan AS penempatan, 
+                u.penempatan_id,
                 u.emel AS email, 
                 u.phone AS no_tel, 
                 u.saiz_baju, 
@@ -27,6 +27,7 @@ export const getMyProfile = async (req, res) => {
                 u.akaun_bank_waris AS no_acc_waris,
                 u.nama_bank_waris AS bank_waris,
                 u.status_ahli, 
+                u.no_ahli,
                 u.gambar, 
                 u.role
             FROM users u
@@ -42,16 +43,16 @@ export const getMyProfile = async (req, res) => {
         let profil = rows[0];
         const currentYear = new Date().getFullYear();
 
-        // 1. Semak rekod transaksi bayaran tahun ini dari database
+        // FIX: Guna jadual sejarah_bayaran yang betul (bukan transaksi_pembayaran)
         const [bayaran] = await db.query(`
-            SELECT MAX(YEAR(tarikh_selesai)) as last_paid_year 
-            FROM transaksi_pembayaran 
-            WHERE user_id = ? AND status_bayaran = 'berjaya'
-        `, [user_id]);
+            SELECT MAX(YEAR(tarikh_cipta)) AS last_paid_year 
+            FROM sejarah_bayaran 
+            WHERE no_kp = ? AND status = 'BERJAYA'
+        `, [no_kp]);
 
-        const lastPaidYear = bayaran[0].last_paid_year;
+        const lastPaidYear = bayaran[0]?.last_paid_year || null;
 
-        // 2. Tentukan status tunggakan yuran secara dinamik (Cegah Hack Frontend)
+        // Tentukan status tunggakan yuran secara dinamik
         let yuranTertunggak = false;
         
         // Sekatan hanya terpakai untuk kaedah bayaran manual / FPX sahaja
@@ -61,11 +62,8 @@ export const getMyProfile = async (req, res) => {
             }
         }
 
-        // 3. Setkan flag keselamatan untuk dihantar ke Vue
-        // Akaun dalam DB tidak diubah (tetap aktif), cuma akses modul disekat melalui flag ini
+        // Set flag keselamatan untuk Vue
         profil.yuran_tertunggak = yuranTertunggak;
-        
-        // Kita paksa is_paid = false jika tertunggak supaya fail Aktiviti & Bantuan automatik menyekat akses!
         profil.is_paid = !yuranTertunggak; 
         profil.status_yuran = yuranTertunggak ? 'YURAN TERTUNGGAK' : 'AHLI BERBAYAR';
 
@@ -109,7 +107,6 @@ export const updateMyProfile = async (req, res) => {
             no_acc_bank, bank_ahli, no_kp
         ]);
 
-        // Jika user nak tukar password dari profil
         if (req.body.kata_laluan) {
             const saltRounds = 10;
             const hashedPassword = await bcrypt.hash(req.body.kata_laluan, saltRounds);
@@ -128,7 +125,6 @@ export const updateMyProfile = async (req, res) => {
 // ==========================================
 export const getSenaraiPTJ = async (req, res) => {
     try {
-        // Ambil terus dari jadual penempatan
         const [ptj] = await db.query('SELECT id, nama_penempatan FROM penempatan ORDER BY nama_penempatan ASC');
         res.status(200).json({ success: true, data: ptj });
     } catch (error) {
@@ -144,7 +140,6 @@ export const applyResignation = async (req, res) => {
     const { sebab_berhenti } = req.body;
 
     try {
-        // Simpan log dalam table berhenti_ahli (Anda perlu pastikan table ini wujud dalam DB anda)
         const createTableBerhenti = `
             CREATE TABLE IF NOT EXISTS berhenti_ahli (
                 id INT AUTO_INCREMENT PRIMARY KEY,
@@ -157,8 +152,6 @@ export const applyResignation = async (req, res) => {
         await db.query(createTableBerhenti);
 
         await db.query(`INSERT INTO berhenti_ahli (no_kp, sebab_berhenti) VALUES (?, ?)`, [no_kp, sebab_berhenti]);
-        
-        // Terus tukar status dalam jadual users
         await db.query(`UPDATE users SET status_ahli = 'tidak aktif' WHERE no_kp = ?`, [no_kp]);
 
         res.status(200).json({ success: true, message: "Permohonan berhenti telah dihantar. Status akaun anda kini tidak aktif." });
@@ -177,6 +170,10 @@ export const changePassword = async (req, res) => {
     try {
         const [user] = await db.query(`SELECT password FROM users WHERE no_kp = ?`, [no_kp]);
         
+        if (user.length === 0) {
+            return res.status(404).json({ success: false, message: "Akaun tidak dijumpai." });
+        }
+
         const isMatch = await bcrypt.compare(oldPassword, user[0].password);
         if (!isMatch) return res.status(400).json({ success: false, message: "Kata laluan lama salah." });
 
@@ -190,7 +187,7 @@ export const changePassword = async (req, res) => {
 };
 
 // ==========================================
-// 6. Muat Naik Gambar Profil (Auto Upload)
+// 6. Muat Naik Gambar Profil
 // ==========================================
 export const updateGambarProfil = async (req, res) => {
     const no_kp = req.user.no_kp;

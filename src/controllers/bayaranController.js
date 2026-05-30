@@ -13,8 +13,8 @@ const CATEGORY_CODE = process.env.CATEGORY_CODE || 'v4vftvzw';
 // ==========================================
 export const ciptaBil = async (req, res) => {
     const no_kp = req.user.no_kp;
+    const user_id = req.user.id;
     
-    // Terima jenis_bayaran dari frontend untuk bezakan Yuran atau Kedai
     let { keterangan, amaun, jenis_bayaran } = req.body; 
     
     console.log(`[FPX] Memulakan cipta bil untuk IC: ${no_kp}, Jenis: ${jenis_bayaran}`);
@@ -56,13 +56,12 @@ export const ciptaBil = async (req, res) => {
         }
 
         const user = users[0];
-        let finalAmaun = parseFloat(amaun); // Default kepada amaun dari frontend (Untuk Kedai)
+        let finalAmaun = parseFloat(amaun);
 
         // --- LOGIK KESELAMATAN: PAKSA KIRAAN DARI DATABASE JIKA YURAN ---
         if (jenis_bayaran === 'YURAN') {
             let yuranBulanan = parseFloat(user.yuran_kelab_bulanan || 0);
             
-            // Jika nilai DB kosong, kira automatik ikut gred di backend
             if (yuranBulanan <= 0) {
                 const gred = (user.gred_penyandang_sspa || '').toUpperCase();
                 if (gred.includes('JUSA') || gred.includes('VU') || gred.includes('VK') || gred.includes('UTAMA')) {
@@ -75,26 +74,23 @@ export const ciptaBil = async (req, res) => {
                         else if (num >= 1 && num <= 8) yuranBulanan = 5.00;
                         else yuranBulanan = 5.00;
                     } else {
-                        yuranBulanan = 5.00; // Kadar lalai minimum
+                        yuranBulanan = 5.00;
                     }
                 }
             }
 
-            // Darab 12 Bulan (Tahun Semasa)
             finalAmaun = yuranBulanan * 12; 
-            keterangan = `Yuran Tahunan Kelab Sesi ${new Date().getFullYear()}`; // Override Keterangan
+            keterangan = `Yuran Tahunan Kelab Sesi ${new Date().getFullYear()}`;
         }
 
-        // Pastikan amaun akhir adalah sah sebelum hantar ke ToyyibPay
         if (!finalAmaun || finalAmaun <= 0) {
             return res.status(400).json({ success: false, message: "Ralat: Jumlah bayaran tidak sah (RM0.00)." });
         }
 
-        const amountInCents = Math.round(finalAmaun * 100); // Tukar ke Sen untuk ToyyibPay
+        const amountInCents = Math.round(finalAmaun * 100);
         const currentFrontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
         const currentBackendUrl = process.env.BACKEND_URL || 'http://localhost:5001';
 
-        // Templat Emel Resit
         const contentEmailResit = `
             <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; border: 1px solid #e5e7eb; border-radius: 12px; overflow: hidden;">
                 <div style="background-color: #08151D; color: #87BCB5; padding: 24px; text-align: center;">
@@ -114,7 +110,6 @@ export const ciptaBil = async (req, res) => {
             </div>
         `;
 
-        // Susun Parameter ToyyibPay
         const formData = new URLSearchParams();
         formData.append('userSecretKey', SECRET_KEY);
         formData.append('categoryCode', CATEGORY_CODE);
@@ -134,7 +129,6 @@ export const ciptaBil = async (req, res) => {
         formData.append('billContentEmail', contentEmailResit); 
         formData.append('billChargeToCustomer', 1);
 
-        // Hantar ke ToyyibPay
         const response = await axios.post(TOYYIBPAY_URL, formData.toString(), {
             headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
         });
@@ -144,10 +138,10 @@ export const ciptaBil = async (req, res) => {
 
         const billUrl = `https://dev.toyyibpay.com/${billCode}`;
 
-        // Simpan dalam Sejarah (Simpan finalAmaun yang dikira oleh backend)
+        // SIMPAN di sejarah_bayaran dengan user_id
         await db.query(
-            'INSERT INTO sejarah_bayaran (no_kp, billCode, amaun, status, keterangan, tarikh_cipta) VALUES (?, ?, ?, ?, ?, NOW())',
-            [no_kp, billCode, finalAmaun, 'PENDING', keterangan]
+            'INSERT INTO sejarah_bayaran (no_kp, user_id, billCode, amaun, status, keterangan, tarikh_cipta) VALUES (?, ?, ?, ?, ?, ?, NOW())',
+            [no_kp, user_id, billCode, finalAmaun, 'PENDING', keterangan]
         );
 
         res.status(200).json({ success: true, bill_url: billUrl });
@@ -162,52 +156,52 @@ export const ciptaBil = async (req, res) => {
 // 2. WEBHOOK CALLBACK (DIPANGGIL OLEH BANK SECARA BACKGROUND)
 // ==========================================
 export const toyyibpayCallback = async (req, res) => {
-    const { status_id, billcode, msg } = req.body;
+    const { status_id, billcode } = req.body;
     console.log(`[WEBHOOK] Isyarat diterima: BillCode ${billcode}, Status ${status_id}`);
 
     try {
         if (status_id == 1) { 
-            const [bayaran] = await db.query('SELECT no_kp FROM sejarah_bayaran WHERE billCode = ?', [billcode]);
+            const [bayaran] = await db.query(
+                'SELECT no_kp, status FROM sejarah_bayaran WHERE billCode = ?', 
+                [billcode]
+            );
             
-            if (bayaran.length > 0) {
-                const no_kp = bayaran[0].no_kp;
-                
-                // Pilih status, mula_potongan, created_at, DAN no_ahli sedia ada
-                const [ahli] = await db.query('SELECT status_ahli, mula_potongan, created_at, no_ahli FROM keahlian_kelab WHERE no_kp = ?', [no_kp]);
+            if (bayaran.length > 0 && bayaran[0].status !== 'BERJAYA') {
+                const { no_kp } = bayaran[0];
 
-                if (ahli.length > 0 && ahli[0].status_ahli !== 'A - Aktif') {
+                // UPDATE jadual users untuk status_ahli
+                const [ahli] = await db.query(
+                    'SELECT id, status_ahli, no_ahli FROM users WHERE no_kp = ?', 
+                    [no_kp]
+                );
+
+                if (ahli.length > 0) {
+                    let noAhliBaru = ahli[0].no_ahli;
                     
-                    let noAhliBaru = ahli[0].no_ahli; // Pegang no_ahli sedia ada dahulu
-
-                    // Jika pengguna ini BENAR-BENAR belum ada nombor ahli (Baru daftar kali pertama)
+                    // Jana no_ahli baru jika belum ada
                     if (!noAhliBaru || noAhliBaru.trim() === '') {
-                        let tahun = new Date().getFullYear();
-                        const pattern = `KP-%-${tahun}`;
-                        const [lastRecord] = await db.query('SELECT no_ahli FROM keahlian_kelab WHERE no_ahli LIKE ? ORDER BY no_ahli DESC LIMIT 1', [pattern]);
-
-                        let nextNum = 1;
-                        if (lastRecord.length > 0 && lastRecord[0].no_ahli) {
-                            try {
-                                const parts = lastRecord[0].no_ahli.split('-'); 
-                                if (parts.length >= 3) nextNum = parseInt(parts[1], 10) + 1;
-                            } catch (err) { nextNum = 1; }
-                        }
-                        noAhliBaru = `KP-${nextNum.toString().padStart(4, '0')}-${tahun}`;
+                        noAhliBaru = await janaNoAhliBaru();
                     }
 
-                    // Kemas kini profil ke Aktif, KEKALKAN atau JANA BARU no_ahli
+                    // UPDATE hanya jadual users
                     await db.query(
-                        'UPDATE keahlian_kelab SET status_ahli = "A - Aktif", no_ahli = ?, resit_pembayaran = "FPX_AUTO_PAY" WHERE no_kp = ?', 
+                        'UPDATE users SET status_ahli = "aktif", no_ahli = ? WHERE no_kp = ?', 
                         [noAhliBaru, no_kp]
                     );
-                    await db.query('UPDATE users SET status_akaun = "Aktif" WHERE no_kp = ?', [no_kp]);
                 }
+
                 // Tandakan resit sebagai berjaya
-                await db.query('UPDATE sejarah_bayaran SET status = "BERJAYA" WHERE billCode = ?', [billcode]);
+                await db.query(
+                    'UPDATE sejarah_bayaran SET status = "BERJAYA" WHERE billCode = ?', 
+                    [billcode]
+                );
             }
             return res.status(200).send('OK');
         } else {
-            await db.query('UPDATE sejarah_bayaran SET status = "GAGAL" WHERE billCode = ?', [billcode]);
+            await db.query(
+                'UPDATE sejarah_bayaran SET status = "GAGAL" WHERE billCode = ?', 
+                [billcode]
+            );
             return res.status(200).send('OK');
         }
     } catch (error) {
@@ -216,7 +210,6 @@ export const toyyibpayCallback = async (req, res) => {
     }
 };
 
-
 // ==========================================
 // 3. DAPATKAN SEJARAH PEMBAYARAN AHLI (AUTO CLEANUP)
 // ==========================================
@@ -224,20 +217,24 @@ export const getSejarahBayaran = async (req, res) => {
     const no_kp = req.user.no_kp;
 
     try {
+        // Auto-tamatkan transaksi PENDING yang dah lebih 15 minit
         await db.query(`
             UPDATE sejarah_bayaran 
             SET status = 'DIBATALKAN', keterangan = CONCAT(keterangan, ' (Expired)')
             WHERE no_kp = ? AND status = 'PENDING' AND TIMESTAMPDIFF(MINUTE, tarikh_cipta, NOW()) >= 15
         `, [no_kp]);
 
-        const query = `
-            SELECT billCode, amaun, status, keterangan, 
-                   DATE_FORMAT(tarikh_cipta, '%d-%m-%Y %h:%i %p') AS tarikh
+        const [rows] = await db.query(`
+            SELECT 
+                billCode, 
+                amaun, 
+                status, 
+                keterangan, 
+                DATE_FORMAT(tarikh_cipta, '%d-%m-%Y %h:%i %p') AS tarikh
             FROM sejarah_bayaran 
             WHERE no_kp = ? 
             ORDER BY tarikh_cipta DESC
-        `;
-        const [rows] = await db.query(query, [no_kp]);
+        `, [no_kp]);
         
         res.status(200).json({ success: true, data: rows });
     } catch (error) {
@@ -245,8 +242,6 @@ export const getSejarahBayaran = async (req, res) => {
         res.status(500).json({ success: false, message: "Gagal menarik sejarah pembayaran." });
     }
 };
-
-
 
 // ==========================================
 // 4. SEMAKAN MANUAL API (DIGUNAKAN OLEH AUTO-POLLING FRONTEND)
@@ -258,9 +253,11 @@ export const semakStatusBayaran = async (req, res) => {
         const formData = new URLSearchParams();
         formData.append('billCode', billcode);
 
-        const toyyibRes = await axios.post('https://dev.toyyibpay.com/index.php/api/getBillTransactions', formData.toString(), {
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
-        });
+        const toyyibRes = await axios.post(
+            'https://dev.toyyibpay.com/index.php/api/getBillTransactions', 
+            formData.toString(), 
+            { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
+        );
 
         if (!toyyibRes.data || toyyibRes.data.length === 0) {
             return res.status(200).json({ success: true, status: 'PENDING' });
@@ -269,52 +266,78 @@ export const semakStatusBayaran = async (req, res) => {
         const successfulTx = toyyibRes.data.find(tx => tx.billpaymentStatus == '1');
 
         if (successfulTx) {
-            const [bayaran] = await db.query('SELECT no_kp, status FROM sejarah_bayaran WHERE billCode = ?', [billcode]);
+            const [bayaran] = await db.query(
+                'SELECT no_kp, status FROM sejarah_bayaran WHERE billCode = ?', 
+                [billcode]
+            );
             
             if (bayaran.length > 0 && bayaran[0].status !== 'BERJAYA') {
-                const no_kp = bayaran[0].no_kp;
+                const { no_kp } = bayaran[0];
                 
-                // Semak status DAN no_ahli
-                const [ahli] = await db.query('SELECT status_ahli, no_ahli FROM keahlian_kelab WHERE no_kp = ?', [no_kp]);
+                // UPDATE jadual users
+                const [ahli] = await db.query(
+                    'SELECT id, status_ahli, no_ahli FROM users WHERE no_kp = ?', 
+                    [no_kp]
+                );
 
-                if (ahli.length > 0 && ahli[0].status_ahli !== 'A - Aktif') {
-                    
+                if (ahli.length > 0) {
                     let noAhliBaru = ahli[0].no_ahli;
-
-                    // Logik penjanaan HANYA JIKA no_ahli adalah null atau kosong
+                    
                     if (!noAhliBaru || noAhliBaru.trim() === '') {
-                        let tahun = new Date().getFullYear();
-                        const pattern = `KP-%-${tahun}`;
-                        const [lastRecord] = await db.query('SELECT no_ahli FROM keahlian_kelab WHERE no_ahli LIKE ? ORDER BY no_ahli DESC LIMIT 1', [pattern]);
-
-                        let nextNum = 1;
-                        if (lastRecord.length > 0 && lastRecord[0].no_ahli) {
-                            try {
-                                const parts = lastRecord[0].no_ahli.split('-'); 
-                                if (parts.length >= 3) nextNum = parseInt(parts[1], 10) + 1;
-                            } catch (err) { nextNum = 1; }
-                        }
-                        noAhliBaru = `KP-${nextNum.toString().padStart(4, '0')}-${tahun}`;
+                        noAhliBaru = await janaNoAhliBaru();
                     }
 
+                    // UPDATE hanya jadual users
                     await db.query(
-                        'UPDATE keahlian_kelab SET status_ahli = "A - Aktif", no_ahli = ?, resit_pembayaran = "FPX_AUTO_PAY" WHERE no_kp = ?', 
+                        'UPDATE users SET status_ahli = "aktif", no_ahli = ? WHERE no_kp = ?', 
                         [noAhliBaru, no_kp]
                     );
-                    await db.query('UPDATE users SET status_akaun = "Aktif" WHERE no_kp = ?', [no_kp]);
                 }
-                await db.query('UPDATE sejarah_bayaran SET status = "BERJAYA" WHERE billCode = ?', [billcode]);
+
+                await db.query(
+                    'UPDATE sejarah_bayaran SET status = "BERJAYA" WHERE billCode = ?', 
+                    [billcode]
+                );
             }
             return res.status(200).json({ success: true, status: 'BERJAYA' });
+
         } else {
             const failedTx = toyyibRes.data.find(tx => tx.billpaymentStatus == '3');
             if (failedTx) {
-                await db.query('UPDATE sejarah_bayaran SET status = "GAGAL" WHERE billCode = ?', [billcode]);
+                await db.query(
+                    'UPDATE sejarah_bayaran SET status = "GAGAL" WHERE billCode = ?', 
+                    [billcode]
+                );
                 return res.status(200).json({ success: true, status: 'GAGAL' });
             }
             return res.status(200).json({ success: true, status: 'PENDING' });
         }
     } catch (error) {
-        return res.status(500).json({ success: false, status: 'PENDING' }); // Anggap pending jika ralat server/bank
+        console.error('🔴 [SEMAK ERROR]:', error.message);
+        return res.status(500).json({ success: false, status: 'PENDING' });
     }
+};
+
+// ==========================================
+// HELPER: Jana No. Ahli Baharu Secara Automatik
+// ==========================================
+const janaNoAhliBaru = async () => {
+    const tahun = new Date().getFullYear();
+    const pattern = `KP-%-${tahun}`;
+    const [lastRecord] = await db.query(
+        'SELECT no_ahli FROM users WHERE no_ahli LIKE ? ORDER BY no_ahli DESC LIMIT 1', 
+        [pattern]
+    );
+
+    let nextNum = 1;
+    if (lastRecord.length > 0 && lastRecord[0].no_ahli) {
+        try {
+            const parts = lastRecord[0].no_ahli.split('-');
+            if (parts.length >= 3) nextNum = parseInt(parts[1], 10) + 1;
+        } catch (err) {
+            nextNum = 1;
+        }
+    }
+
+    return `KP-${nextNum.toString().padStart(4, '0')}-${tahun}`;
 };
