@@ -31,10 +31,12 @@ router.delete('/batal/:acara_id', batalSertai);     // batal pendaftaran
 // ------------------------------------------
 const adminOnly = requireRole(['Admin', 'Super Admin', 'Bendahari']);
 
-router.post('/admin/cipta', adminOnly, upload.single('poster'), ciptaAcara);
+router.post('/admin/cipta', adminOnly, upload.array('poster', 5), ciptaAcara);
 router.get('/admin/semua', adminOnly, senaraiSemuaAcara);
 router.put('/admin/kemaskini/:id', adminOnly, upload.single('poster'), kemaskiniAcara);
 router.get('/admin/peserta/:id', adminOnly, senaraiPesertaAcara);
 router.delete('/admin/padam/:id', adminOnly, padamAcara);
+// Di dalam src/routes/acaraRoutes.js
+router.put('/admin/kemaskini/:id', adminOnly, upload.array('poster', 5), kemaskiniAcara);
 
 export default router;

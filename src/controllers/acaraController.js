@@ -137,7 +137,11 @@ export const ciptaAcara = async (req, res) => {
         tarikh_acara, tarikh_tutup, emel_urusetia, no_tel_urusetia 
     } = req.body;
 
-    const poster = req.file ? req.file.filename : null;
+    let posterString = null;
+    if (req.files && req.files.length > 0) {
+        const posterArray = req.files.map(file => file.filename);
+        posterString = JSON.stringify(posterArray);
+    }
 
     if (!nama_acara || nama_acara.trim() === '') {
         return res.status(400).json({ success: false, message: "Nama acara wajib diisi." });
@@ -150,7 +154,7 @@ export const ciptaAcara = async (req, res) => {
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'AKTIF')
         `, [
             nama_acara, jenis_acara || null, keterangan || null, lokasi || null,
-            tarikh_acara || null, tarikh_tutup || null, poster,
+            tarikh_acara || null, tarikh_tutup || null, posterString,
             emel_urusetia || null, no_tel_urusetia || null
         ]);
 
@@ -219,13 +223,14 @@ export const kemaskiniAcara = async (req, res) => {
 
 // B4. Senarai peserta bagi satu acara
 export const senaraiPesertaAcara = async (req, res) => {
+
     const { id } = req.params;
     try {
         const [peserta] = await db.query(`
             SELECT 
                 p.id, p.kategori, p.catatan, p.tarikh_daftar,
                 u.no_kp, u.nama_pegawai, u.gred_penyandang_sspa AS gred_sspa,
-                u.emel AS email, u.phone AS no_tel, u.no_ahli,
+                u.emel AS email, u.phone AS no_tel, u.no_ahli, u.saiz_baju, 
                 pt.nama_penempatan AS penempatan
             FROM penyertaan_acara p
             JOIN users u ON p.no_kp = u.no_kp

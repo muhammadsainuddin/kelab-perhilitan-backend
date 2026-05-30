@@ -14,6 +14,9 @@ import userRoutes from './routes/userRoutes.js';
 import bayaranRoutes from './routes/bayaranRoutes.js';
 import bantuanRoutes from './routes/bantuanRoutes.js';
 import acaraRoutes from './routes/acaraRoutes.js';
+import kedaiRoutes from './routes/kedaiRoutes.js';
+import kewanganRoutes from './routes/kewanganRoutes.js';
+
 
 import eventBus from './utils/eventEmitter.js';
 import { requestLogger, errorLogger } from './middleware/logMiddleware.js';
@@ -64,6 +67,8 @@ app.use('/api/user', userRoutes); // FIX: Ditukar kepada '/api/user' untuk elak 
 app.use('/api/bayaran', bayaranRoutes);
 app.use('/api/bantuan', bantuanRoutes);
 app.use('/api/acara', acaraRoutes);
+app.use('/api/kedai', kedaiRoutes);
+app.use('/api/admin/kewangan', kewanganRoutes);
 
 app.use(errorLogger);
 
