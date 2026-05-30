@@ -1,8 +1,9 @@
 import db from '../config/db.js';
 import bcrypt from 'bcryptjs';
+import { semakStatusBerbayar } from '../utils/keahlianHelper.js';
 
 // ==========================================
-// 1. Ambil Profil & Logik Sekatan Yuran Tertunggak
+// 1. Ambil Profil & Logik Status Berbayar
 // ==========================================
 export const getMyProfile = async (req, res) => {
     const no_kp = req.user.no_kp;
@@ -41,31 +42,15 @@ export const getMyProfile = async (req, res) => {
         }
 
         let profil = rows[0];
-        const currentYear = new Date().getFullYear();
 
-        // FIX: Guna jadual sejarah_bayaran yang betul (bukan transaksi_pembayaran)
-        const [bayaran] = await db.query(`
-            SELECT MAX(YEAR(tarikh_cipta)) AS last_paid_year 
-            FROM sejarah_bayaran 
-            WHERE no_kp = ? AND status = 'BERJAYA'
-        `, [no_kp]);
+        // Tentukan status berbayar melalui helper bersama:
+        //  - Potongan Biro angkasa -> sentiasa berbayar
+        //  - Bayar secara manual    -> semak sejarah_bayaran tahun semasa
+        const isPaid = await semakStatusBerbayar(no_kp, profil.pilihan_potongan);
 
-        const lastPaidYear = bayaran[0]?.last_paid_year || null;
-
-        // Tentukan status tunggakan yuran secara dinamik
-        let yuranTertunggak = false;
-        
-        // Sekatan hanya terpakai untuk kaedah bayaran manual / FPX sahaja
-        if (profil.pilihan_potongan === 'Bayar secara manual' || profil.pilihan_potongan === 'FPX') {
-            if (!lastPaidYear || lastPaidYear < currentYear) {
-                yuranTertunggak = true;
-            }
-        }
-
-        // Set flag keselamatan untuk Vue
-        profil.yuran_tertunggak = yuranTertunggak;
-        profil.is_paid = !yuranTertunggak; 
-        profil.status_yuran = yuranTertunggak ? 'YURAN TERTUNGGAK' : 'AHLI BERBAYAR';
+        profil.is_paid = isPaid;
+        profil.yuran_tertunggak = !isPaid;
+        profil.status_yuran = isPaid ? 'AHLI BERBAYAR' : 'YURAN TERTUNGGAK';
 
         res.status(200).json({ success: true, data: profil });
     } catch (error) {
@@ -108,8 +93,7 @@ export const updateMyProfile = async (req, res) => {
         ]);
 
         if (req.body.kata_laluan) {
-            const saltRounds = 10;
-            const hashedPassword = await bcrypt.hash(req.body.kata_laluan, saltRounds);
+            const hashedPassword = await bcrypt.hash(req.body.kata_laluan, 10);
             await db.query(`UPDATE users SET password = ? WHERE no_kp = ?`, [hashedPassword, no_kp]);
         }
 
@@ -152,9 +136,12 @@ export const applyResignation = async (req, res) => {
         await db.query(createTableBerhenti);
 
         await db.query(`INSERT INTO berhenti_ahli (no_kp, sebab_berhenti) VALUES (?, ?)`, [no_kp, sebab_berhenti]);
-        await db.query(`UPDATE users SET status_ahli = 'tidak aktif' WHERE no_kp = ?`, [no_kp]);
 
-        res.status(200).json({ success: true, message: "Permohonan berhenti telah dihantar. Status akaun anda kini tidak aktif." });
+        // Catatan: kita TIDAK terus nonaktifkan login di sini.
+        // Permohonan berhenti perlu diluluskan admin dahulu (melalui adminController).
+        // status_ahli kekal 'aktif' sehingga admin luluskan.
+
+        res.status(200).json({ success: true, message: "Permohonan berhenti telah dihantar kepada urusetia untuk semakan." });
     } catch (error) {
         res.status(500).json({ success: false, message: "Gagal menghantar permohonan berhenti." });
     }

@@ -1,21 +1,36 @@
 import db from '../config/db.js';
 import bcrypt from 'bcryptjs';
+import { janaNoAhliBaru } from '../utils/keahlianHelper.js';
+
+// =====================================================================
+// NOTA SELURUH FAIL:
+// - Semua data ahli/staff diambil dari jadual `users` (bukan senarai_staff)
+// - Kolum betul: emel, phone, gred_penyandang_sspa, penempatan_id (JOIN
+//   penempatan), jenis_potongan, yuran_kelab_bulanan, status_ahli, no_ahli
+// - status_ahli: ENUM('aktif','tidak aktif') -> HANYA suis login
+// - "berbayar" dikira dinamik: Biro Angkasa = sentiasa; Manual = sejarah_bayaran
+// =====================================================================
+
 
 // ==========================================
-// 1. PENGURUSAN BANTUAN & BERHENTI
+// 1. PENGURUSAN BANTUAN KEBAJIKAN
 // ==========================================
 export const senaraiKebajikan = async (req, res) => {
     try {
         const query = `
-            SELECT b.id, b.no_kp, s.nama_pegawai, s.penempatan, b.jenis_bantuan, 
-                   b.keterangan, b.dokumen_sokongan, b.status_permohonan, b.tarikh_mohon
+            SELECT 
+                b.id, b.no_kp, u.nama_pegawai, p.nama_penempatan AS penempatan,
+                b.jenis_bantuan, b.keterangan, b.dokumen_sokongan, 
+                b.status_permohonan, b.tarikh_mohon
             FROM bantuan_kebajikan b
-            JOIN senarai_staff s ON b.no_kp = s.no_kp
+            JOIN users u ON b.no_kp = u.no_kp
+            LEFT JOIN penempatan p ON u.penempatan_id = p.id
             ORDER BY b.tarikh_mohon DESC
         `;
         const [senarai] = await db.query(query);
         res.status(200).json({ success: true, data: senarai });
     } catch (error) {
+        console.error("Ralat Senarai Kebajikan:", error);
         res.status(500).json({ success: false, message: "Ralat pelayan." });
     }
 };
@@ -31,18 +46,24 @@ export const kemaskiniStatusKebajikan = async (req, res) => {
     }
 };
 
+// ==========================================
+// 2. PENGURUSAN PERMOHONAN BERHENTI AHLI
+// ==========================================
 export const senaraiBerhentiAhli = async (req, res) => {
     try {
         const query = `
-            SELECT b.id, b.no_kp, s.nama_pegawai, s.penempatan, b.sebab_berhenti, 
-                   b.status_permohonan, b.tarikh_mohon
+            SELECT 
+                b.id, b.no_kp, u.nama_pegawai, p.nama_penempatan AS penempatan,
+                b.sebab_berhenti, b.status_permohonan, b.tarikh_mohon
             FROM berhenti_ahli b
-            JOIN senarai_staff s ON b.no_kp = s.no_kp
+            JOIN users u ON b.no_kp = u.no_kp
+            LEFT JOIN penempatan p ON u.penempatan_id = p.id
             ORDER BY b.tarikh_mohon DESC
         `;
         const [senarai] = await db.query(query);
         res.status(200).json({ success: true, data: senarai });
     } catch (error) {
+        console.error("Ralat Senarai Berhenti:", error);
         res.status(500).json({ success: false, message: "Ralat pelayan." });
     }
 };
@@ -53,244 +74,346 @@ export const kemaskiniBerhentiAhli = async (req, res) => {
 
     try {
         await db.query(`UPDATE berhenti_ahli SET status_permohonan = ? WHERE id = ?`, [status_permohonan, id]);
-        
+
+        // Jika LULUS -> nonaktifkan login ahli (status_ahli = 'tidak aktif')
         if (status_permohonan === 'LULUS') {
-            await db.query(`UPDATE senarai_staff SET status_ahli = 'TIDAK AKTIF / BERHENTI' WHERE no_kp = ?`, [no_kp]);
-            await db.query(`UPDATE users SET status_akaun = 'Tidak Aktif' WHERE no_kp = ?`, [no_kp]);
-        } else if (status_permohonan === 'DITOLAK') {
-            await db.query(`UPDATE senarai_staff SET status_ahli = 'A - Aktif' WHERE no_kp = ?`, [no_kp]);
+            await db.query(`UPDATE users SET status_ahli = 'tidak aktif' WHERE no_kp = ?`, [no_kp]);
         }
-        
-        res.status(200).json({ success: true, message: `Permohonan penamatan kelab telah ${status_permohonan}.` });
+        // Jika DITOLAK -> kekalkan login aktif (tiada perubahan diperlukan,
+        // status_ahli sepatutnya masih 'aktif')
+        else if (status_permohonan === 'DITOLAK') {
+            await db.query(`UPDATE users SET status_ahli = 'aktif' WHERE no_kp = ?`, [no_kp]);
+        }
+
+        res.status(200).json({ success: true, message: `Permohonan berhenti telah ${status_permohonan}.` });
     } catch (error) {
         res.status(500).json({ success: false, message: "Ralat pelayan." });
     }
 };
 
 // ==========================================
-// 2. SENARAI PENGESAHAN & AHLI
+// 3. SENARAI & PENGURUSAN AHLI
 // ==========================================
-export const senaraiMenungguSahkan = async (req, res) => {
-    try {
-        const query = `
-            SELECT 
-                no_kp, emel_kelab AS email, nama_pegawai, gred_sspa, penempatan, 
-                negeri_bertugas, no_tel, yuran_bulanan, pilihan_potongan, 
-                klasifikasi_jawatan, created_at AS tarikh_mohon
-            FROM senarai_staff
-            WHERE status_ahli = 'Menunggu Kelulusan'
-            ORDER BY created_at ASC
-        `;
-        const [senarai] = await db.query(query);
-        res.status(200).json({ success: true, count: senarai.length, data: senarai });
-    } catch (error) {
-        res.status(500).json({ success: false, message: "Ralat menarik data pengesahan." });
-    }
-};
 
-export const sahkanAkaun = async (req, res) => {
-    const { no_kp } = req.params;
-    const status_keputusan = req.body.status_keputusan || req.body.status_ahli;
-
-    try {
-        if (status_keputusan === 'Aktif' || status_keputusan === 'A - Aktif') {
-            const [ahli] = await db.query('SELECT created_at FROM senarai_staff WHERE no_kp = ?', [no_kp]);
-            if (ahli.length === 0) return res.status(404).json({ success: false, message: "Rekod tidak dijumpai." });
-
-            let tahun = new Date().getFullYear();
-            if (ahli[0].created_at) {
-                const tarikhDaftar = new Date(ahli[0].created_at);
-                if (!isNaN(tarikhDaftar)) tahun = tarikhDaftar.getFullYear();
-            }
-
-            const pattern = `KP-%-${tahun}`;
-            const [lastRecord] = await db.query('SELECT no_ahli FROM senarai_staff WHERE no_ahli LIKE ? ORDER BY no_ahli DESC LIMIT 1', [pattern]);
-
-            let nextNum = 1;
-            if (lastRecord.length > 0 && lastRecord[0].no_ahli) {
-                try {
-                    const parts = lastRecord[0].no_ahli.split('-'); 
-                    if (parts.length >= 3) nextNum = parseInt(parts[1], 10) + 1;
-                } catch (err) { nextNum = 1; }
-            }
-
-            const noAhliBaru = `KP-${nextNum.toString().padStart(4, '0')}-${tahun}`;
-
-            await db.query('UPDATE senarai_staff SET status_ahli = "A - Aktif", no_ahli = ? WHERE no_kp = ?', [noAhliBaru, no_kp]);
-            await db.query('UPDATE users SET status_akaun = "Aktif" WHERE no_kp = ?', [no_kp]);
-            
-            return res.status(200).json({ success: true, message: "Akaun diaktifkan.", no_ahli: noAhliBaru });
-        } else {
-            await db.query('UPDATE senarai_staff SET status_ahli = "Ditolak" WHERE no_kp = ?', [no_kp]);
-            await db.query('UPDATE users SET status_akaun = "Ditolak" WHERE no_kp = ?', [no_kp]);
-            return res.status(200).json({ success: true, message: "Permohonan telah ditolak." });
-        }
-    } catch (error) {
-        res.status(500).json({ success: false, message: "Ralat pelayan." });
-    }
-};
-
+// Senarai semua pengguna + status berbayar dikira dinamik
 export const senaraiSemuaAhli = async (req, res) => {
     try {
+        const currentYear = new Date().getFullYear();
         const query = `
-            SELECT s.*, u.role, u.status_akaun
-            FROM senarai_staff s
-            LEFT JOIN users u ON s.no_kp = u.no_kp
-            ORDER BY s.nama_pegawai ASC
+            SELECT 
+                u.id, u.no_kp, u.nama_pegawai, u.gred_penyandang_sspa AS gred_sspa,
+                p.nama_penempatan AS penempatan, u.emel AS email, u.phone AS no_tel,
+                u.jenis_potongan, u.yuran_kelab_bulanan, u.status_ahli, u.no_ahli, u.role,
+                CASE 
+                    WHEN u.jenis_potongan = 'Potongan Biro angkasa' THEN 1
+                    WHEN EXISTS (
+                        SELECT 1 FROM sejarah_bayaran sb 
+                        WHERE sb.no_kp = u.no_kp 
+                          AND sb.status = 'BERJAYA' 
+                          AND YEAR(sb.tarikh_cipta) = ?
+                    ) THEN 1
+                    ELSE 0
+                END AS is_paid
+            FROM users u
+            LEFT JOIN penempatan p ON u.penempatan_id = p.id
+            ORDER BY u.nama_pegawai ASC
         `;
-        const [ahli] = await db.query(query);
+        const [ahli] = await db.query(query, [currentYear]);
         res.status(200).json({ success: true, data: ahli });
     } catch (error) {
+        console.error("Ralat Senarai Ahli:", error);
         res.status(500).json({ success: false, message: "Gagal menarik senarai ahli." });
     }
 };
 
+// Kemaskini maklumat ahli (no_ahli, status login, role)
 export const kemaskiniAhli = async (req, res) => {
     const { no_kp } = req.params;
     const { no_ahli, status_ahli, role } = req.body;
     try {
-        await db.query(`UPDATE senarai_staff SET no_ahli = ?, status_ahli = ? WHERE no_kp = ?`, [no_ahli || null, status_ahli, no_kp]);
-        if (role) {
-            const statusAkaun = status_ahli === 'A - Aktif' ? 'Aktif' : 'Ditolak';
-            await db.query(`UPDATE users SET role = ?, status_akaun = ? WHERE no_kp = ?`, [role, statusAkaun, no_kp]);
+        // Bina query dinamik supaya hanya field yang dihantar dikemas kini
+        const fields = [];
+        const values = [];
+
+        if (no_ahli !== undefined) { fields.push('no_ahli = ?'); values.push(no_ahli || null); }
+        if (status_ahli !== undefined) { fields.push('status_ahli = ?'); values.push(status_ahli); }
+        if (role !== undefined) { fields.push('role = ?'); values.push(role); }
+
+        if (fields.length === 0) {
+            return res.status(400).json({ success: false, message: "Tiada maklumat untuk dikemas kini." });
         }
+
+        values.push(no_kp);
+        await db.query(`UPDATE users SET ${fields.join(', ')} WHERE no_kp = ?`, values);
+
         res.status(200).json({ success: true, message: "Maklumat ahli berjaya dikemas kini." });
     } catch (error) {
+        console.error("Ralat Kemaskini Ahli:", error);
         res.status(500).json({ success: false, message: "Gagal mengemas kini ahli." });
     }
 };
 
+// Daftar ahli secara manual (untuk Biro Angkasa / pendaftaran admin)
+// Jana no_ahli automatik jika belum ada.
 export const daftarAhliManual = async (req, res) => {
-    const { no_kp, yuran_bulanan, pilihan_potongan, no_ahli } = req.body;
+    const { no_kp, yuran_bulanan, jenis_potongan } = req.body;
     try {
-        const [wujud] = await db.query(`SELECT status_ahli FROM senarai_staff WHERE no_kp = ?`, [no_kp]);
-        if (wujud.length === 0) return res.status(400).json({ success: false, message: "Kakitangan tiada dalam senarai Induk." });
-        
+        const [wujud] = await db.query(`SELECT no_ahli FROM users WHERE no_kp = ?`, [no_kp]);
+        if (wujud.length === 0) {
+            return res.status(400).json({ success: false, message: "Kakitangan tiada dalam jadual users." });
+        }
+
+        // Jana no_ahli jika belum ada
+        let noAhli = wujud[0].no_ahli;
+        if (!noAhli || String(noAhli).trim() === '') {
+            noAhli = await janaNoAhliBaru();
+        }
+
         await db.query(
-            `UPDATE senarai_staff SET yuran_bulanan = ?, pilihan_potongan = ?, no_ahli = ?, status_ahli = 'A - Aktif' WHERE no_kp = ?`, 
-            [yuran_bulanan, pilihan_potongan, no_ahli || null, no_kp]
+            `UPDATE users 
+             SET yuran_kelab_bulanan = ?, jenis_potongan = ?, no_ahli = ?, status_ahli = 'aktif' 
+             WHERE no_kp = ?`,
+            [yuran_bulanan || null, jenis_potongan || 'Potongan Biro angkasa', noAhli, no_kp]
         );
-        res.status(200).json({ success: true, message: "Ahli baharu berjaya didaftarkan secara manual!" });
+
+        res.status(200).json({ success: true, message: "Ahli berjaya didaftarkan secara manual!", no_ahli: noAhli });
     } catch (error) {
+        console.error("Ralat Daftar Manual:", error);
         res.status(500).json({ success: false, message: "Ralat pangkalan data." });
     }
 };
 
+// JANA no_ahli PUKAL untuk SEMUA ahli Biro Angkasa yang belum ada nombor.
+// Running number berterusan. Jalankan sekali selepas import CSV.
+export const janaNoAhliBiroPukal = async (req, res) => {
+    try {
+        const [senarai] = await db.query(`
+            SELECT no_kp FROM users 
+            WHERE jenis_potongan = 'Potongan Biro angkasa'
+              AND (no_ahli IS NULL OR no_ahli = '')
+            ORDER BY id ASC
+        `);
+
+        if (senarai.length === 0) {
+            return res.status(200).json({ success: true, message: "Tiada ahli Biro Angkasa yang perlu dijana nombor.", dijana: 0 });
+        }
+
+        let dijana = 0;
+        for (const ahli of senarai) {
+            const noAhli = await janaNoAhliBaru(); // ambil MAX semasa + 1 setiap kali
+            await db.query(`UPDATE users SET no_ahli = ? WHERE no_kp = ?`, [noAhli, ahli.no_kp]);
+            dijana++;
+        }
+
+        res.status(200).json({ success: true, message: `${dijana} nombor ahli Biro Angkasa berjaya dijana.`, dijana });
+    } catch (error) {
+        console.error("Ralat Jana Pukal:", error);
+        res.status(500).json({ success: false, message: "Gagal menjana nombor ahli pukal." });
+    }
+};
+
 // ==========================================
-// 3. PENGURUSAN STAFF, STATISTIK & DIREKTORI
+// 4. PENGURUSAN INDUK PENGGUNA (IMPORT CSV)
 // ==========================================
 export const senaraiSemuaStaff = async (req, res) => {
     try {
         const query = `
-            SELECT no_kp, nama_pegawai, gred_sspa, penempatan, status_ahli,
-            CASE WHEN status_ahli = 'A - Aktif' THEN 1 ELSE 0 END AS is_ahli
-            FROM senarai_staff ORDER BY nama_pegawai ASC
+            SELECT 
+                u.no_kp, u.nama_pegawai, u.gred_penyandang_sspa AS gred_sspa,
+                p.nama_penempatan AS penempatan, u.status_ahli, u.no_ahli,
+                u.jenis_potongan,
+                CASE WHEN u.no_ahli IS NOT NULL AND u.no_ahli != '' THEN 1 ELSE 0 END AS is_ahli
+            FROM users u
+            LEFT JOIN penempatan p ON u.penempatan_id = p.id
+            ORDER BY u.nama_pegawai ASC
         `;
         const [staff] = await db.query(query);
         res.status(200).json({ success: true, data: staff });
     } catch (error) {
+        console.error("Ralat Senarai Staff:", error);
         res.status(500).json({ success: false, message: "Gagal menarik senarai staff." });
     }
 };
 
+// Import pukal kakitangan ke jadual users.
+// Penempatan dipetakan melalui jadual penempatan (cari/cipta id).
 export const tambahStaffBulk = async (req, res) => {
     const { staffList } = req.body;
-    if (!staffList || staffList.length === 0) return res.status(400).json({ success: false, message: "Tiada data dihantar." });
-    
+    if (!staffList || staffList.length === 0) {
+        return res.status(400).json({ success: false, message: "Tiada data dihantar." });
+    }
+
     try {
-        const values = staffList.map(s => [s.no_kp, s.nama_pegawai.toUpperCase(), s.gred_sspa.toUpperCase(), s.penempatan.toUpperCase()]);
-        const query = `
-            INSERT INTO senarai_staff (no_kp, nama_pegawai, gred_sspa, penempatan) VALUES ? 
-            ON DUPLICATE KEY UPDATE 
-            nama_pegawai = VALUES(nama_pegawai), gred_sspa = VALUES(gred_sspa), penempatan = VALUES(penempatan)
-        `;
-        await db.query(query, [values]);
-        res.status(200).json({ success: true, message: `${staffList.length} rekod penjawat berjaya disimpan.` });
+        for (const s of staffList) {
+            // Pastikan penempatan wujud, dapatkan id-nya
+            let penempatanId = null;
+            if (s.penempatan && String(s.penempatan).trim() !== '') {
+                const namaPenempatan = String(s.penempatan).toUpperCase().trim();
+                const [adaP] = await db.query(
+                    `SELECT id FROM penempatan WHERE nama_penempatan = ?`, [namaPenempatan]
+                );
+                if (adaP.length > 0) {
+                    penempatanId = adaP[0].id;
+                } else {
+                    const [insP] = await db.query(
+                        `INSERT INTO penempatan (nama_penempatan) VALUES (?)`, [namaPenempatan]
+                    );
+                    penempatanId = insP.insertId;
+                }
+            }
+
+            // Upsert pengguna berdasarkan no_kp (UNIQUE)
+            await db.query(
+                `INSERT INTO users (no_kp, nama_pegawai, gred_penyandang_sspa, penempatan_id) 
+                 VALUES (?, ?, ?, ?)
+                 ON DUPLICATE KEY UPDATE 
+                    nama_pegawai = VALUES(nama_pegawai),
+                    gred_penyandang_sspa = VALUES(gred_penyandang_sspa),
+                    penempatan_id = VALUES(penempatan_id)`,
+                [
+                    s.no_kp,
+                    (s.nama_pegawai || '').toUpperCase(),
+                    (s.gred_sspa || s.gred_penyandang_sspa || '').toUpperCase(),
+                    penempatanId
+                ]
+            );
+        }
+
+        res.status(200).json({ success: true, message: `${staffList.length} rekod kakitangan berjaya disimpan.` });
     } catch (error) {
-        res.status(500).json({ success: false, message: "Ralat pangkalan data." });
+        console.error("Ralat Import Pukal:", error);
+        res.status(500).json({ success: false, message: "Ralat pangkalan data semasa import." });
     }
 };
 
+// ==========================================
+// 5. RESIT PEMBAYARAN
+// ==========================================
 export const getAllResitBayaran = async (req, res) => {
     try {
         const query = `
             SELECT 
                 sb.id, sb.billCode, sb.amaun, sb.status, sb.keterangan, 
                 DATE_FORMAT(sb.tarikh_cipta, '%d-%m-%Y %h:%i %p') AS tarikh,
-                sb.tarikh_cipta, s.nama_pegawai AS nama_penuh, s.no_kp, s.emel_kelab AS email, s.no_tel, s.no_ahli
+                sb.tarikh_cipta, 
+                u.nama_pegawai AS nama_penuh, u.no_kp, 
+                u.emel AS email, u.phone AS no_tel, u.no_ahli
             FROM sejarah_bayaran sb
-            LEFT JOIN senarai_staff s ON sb.no_kp = s.no_kp
+            LEFT JOIN users u ON sb.no_kp = u.no_kp
             ORDER BY sb.tarikh_cipta DESC
         `;
         const [rows] = await db.query(query);
         res.status(200).json({ success: true, data: rows });
     } catch (error) {
+        console.error("Ralat Resit Bayaran:", error);
         res.status(500).json({ success: false, message: "Gagal menarik senarai resit." });
     }
 };
 
-export const getDirektoriBersepadu = async (req, res) => {
-    try {
-        const query = `SELECT *, nama_pegawai AS nama_penuh, emel_kelab AS email FROM senarai_staff ORDER BY nama_pegawai ASC`;
-        const [rows] = await db.query(query);
-        
-        const formattedData = rows.map(row => ({
-            ...row,
-            status_sebenar: row.status_ahli || 'BELUM MENDAFTAR',
-            potongan_sebenar: row.pilihan_potongan || 'TIADA'
-        }));
-
-        res.status(200).json({ success: true, data: formattedData });
-    } catch (error) {
-        res.status(500).json({ success: false, message: "Gagal menarik senarai direktori." });
-    }
-};
-
+// ==========================================
+// 6. STATISTIK KEAHLIAN (BERBAYAR vs TIDAK)
+// ==========================================
 export const getStatistikTunggakan = async (req, res) => {
     try {
-        const baseJoin = ``; // Tidak perlu join, terus query dari senarai_staff
-        const unpaidWhere = `WHERE status_ahli IS NULL OR status_ahli != 'A - Aktif'`;
-        const paidWhere = `WHERE status_ahli = 'A - Aktif'`;
+        const currentYear = new Date().getFullYear();
 
-        const getStats = async (whereClause) => {
+        // Klausa "berbayar": Biro Angkasa ATAU ada bayaran BERJAYA tahun ini
+        const paidExpr = `
+            (u.jenis_potongan = 'Potongan Biro angkasa'
+             OR EXISTS (
+                SELECT 1 FROM sejarah_bayaran sb 
+                WHERE sb.no_kp = u.no_kp AND sb.status = 'BERJAYA' 
+                  AND YEAR(sb.tarikh_cipta) = ${db.escape(currentYear)}
+             ))
+        `;
+
+        const getStats = async (isPaid) => {
+            const whereClause = isPaid ? `WHERE ${paidExpr}` : `WHERE NOT ${paidExpr}`;
+
             const [kumpulan] = await db.query(`
                 SELECT 
                     CASE 
-                        WHEN gred_sspa LIKE '%JUSA%' OR gred_sspa LIKE '%VU%' OR gred_sspa LIKE '%VK%' THEN 'JUSA / PENGURUSAN TERTINGGI'
-                        WHEN gred_sspa IS NULL OR gred_sspa = '' THEN 'TIADA REKOD'
-                        ELSE CONCAT('KUMPULAN ', SUBSTRING(gred_sspa, 1, 1))
-                    END as label, COUNT(*) as jumlah
-                FROM senarai_staff ${whereClause} GROUP BY label ORDER BY jumlah DESC
+                        WHEN u.gred_penyandang_sspa LIKE '%JUSA%' OR u.gred_penyandang_sspa LIKE '%VU%' OR u.gred_penyandang_sspa LIKE '%VK%' THEN 'JUSA / PENGURUSAN TERTINGGI'
+                        WHEN u.gred_penyandang_sspa IS NULL OR u.gred_penyandang_sspa = '' THEN 'TIADA REKOD'
+                        ELSE CONCAT('KUMPULAN ', SUBSTRING(u.gred_penyandang_sspa, 1, 1))
+                    END AS label, COUNT(*) AS jumlah
+                FROM users u ${whereClause} GROUP BY label ORDER BY jumlah DESC
             `);
             const [gred] = await db.query(`
-                SELECT IFNULL(gred_sspa, 'TIADA REKOD') as label, COUNT(*) as jumlah
-                FROM senarai_staff ${whereClause} GROUP BY gred_sspa ORDER BY jumlah DESC
+                SELECT IFNULL(u.gred_penyandang_sspa, 'TIADA REKOD') AS label, COUNT(*) AS jumlah
+                FROM users u ${whereClause} GROUP BY u.gred_penyandang_sspa ORDER BY jumlah DESC
             `);
             const [cawangan] = await db.query(`
-                SELECT IFNULL(penempatan, 'TIADA REKOD') as label, COUNT(*) as jumlah
-                FROM senarai_staff ${whereClause} GROUP BY penempatan ORDER BY jumlah DESC
+                SELECT IFNULL(p.nama_penempatan, 'TIADA REKOD') AS label, COUNT(*) AS jumlah
+                FROM users u LEFT JOIN penempatan p ON u.penempatan_id = p.id 
+                ${whereClause} GROUP BY p.nama_penempatan ORDER BY jumlah DESC
             `);
-            const [total] = await db.query(`SELECT COUNT(*) as total FROM senarai_staff ${whereClause}`);
-            
+            const [total] = await db.query(`SELECT COUNT(*) AS total FROM users u ${whereClause}`);
+
             return { total: total[0].total, kumpulan, gred, cawangan };
         };
 
-        const tidakBerbayar = await getStats(unpaidWhere);
-        const berbayar = await getStats(paidWhere);
+        const berbayar = await getStats(true);
+        const tidakBerbayar = await getStats(false);
 
-        res.status(200).json({ success: true, data: { tidak_berbayar: tidakBerbayar, berbayar: berbayar } });
+        res.status(200).json({ 
+            success: true, 
+            data: { berbayar, tidak_berbayar: tidakBerbayar } 
+        });
     } catch (error) {
+        console.error("Ralat Statistik:", error);
         res.status(500).json({ success: false, message: "Gagal memuatkan statistik keahlian." });
     }
 };
 
 // ==========================================
-// 4. PROFIL ADMIN
+// 7. DIREKTORI BERSEPADU
+// ==========================================
+export const getDirektoriBersepadu = async (req, res) => {
+    try {
+        const currentYear = new Date().getFullYear();
+        const query = `
+            SELECT 
+                u.no_kp, u.nama_pegawai AS nama_penuh, u.gred_penyandang_sspa AS gred_sspa,
+                p.nama_penempatan AS penempatan, u.emel AS email, u.phone AS no_tel,
+                u.jenis_potongan, u.status_ahli, u.no_ahli,
+                CASE 
+                    WHEN u.jenis_potongan = 'Potongan Biro angkasa' THEN 'BERBAYAR (BIRO)'
+                    WHEN EXISTS (
+                        SELECT 1 FROM sejarah_bayaran sb 
+                        WHERE sb.no_kp = u.no_kp AND sb.status = 'BERJAYA' 
+                          AND YEAR(sb.tarikh_cipta) = ?
+                    ) THEN 'BERBAYAR (FPX)'
+                    ELSE 'BELUM BAYAR'
+                END AS status_bayaran
+            FROM users u
+            LEFT JOIN penempatan p ON u.penempatan_id = p.id
+            ORDER BY u.nama_pegawai ASC
+        `;
+        const [rows] = await db.query(query, [currentYear]);
+        res.status(200).json({ success: true, data: rows });
+    } catch (error) {
+        console.error("Ralat Direktori:", error);
+        res.status(500).json({ success: false, message: "Gagal menarik senarai direktori." });
+    }
+};
+
+// ==========================================
+// 8. PROFIL ADMIN
 // ==========================================
 export const getProfilSaya = async (req, res) => {
     const no_kp = req.user.no_kp; 
     try {
-        const query = `SELECT nama_pegawai AS nama_penuh, no_kp, penempatan AS nama_majikan, gred_sspa, emel_kelab AS email, no_tel, saiz_baju, gambar, status_ahli FROM senarai_staff WHERE no_kp = ?`;
+        const query = `
+            SELECT 
+                u.nama_pegawai AS nama_penuh, u.no_kp, 
+                p.nama_penempatan AS nama_majikan, u.gred_penyandang_sspa AS gred_sspa,
+                u.emel AS email, u.phone AS no_tel, u.saiz_baju, u.gambar, 
+                u.status_ahli, u.role
+            FROM users u
+            LEFT JOIN penempatan p ON u.penempatan_id = p.id
+            WHERE u.no_kp = ?
+        `;
         const [profil] = await db.query(query, [no_kp]);
         if (profil.length === 0) return res.status(404).json({ success: false, message: "Rekod tidak ditemui." });
         res.status(200).json({ success: true, data: profil[0] });
@@ -301,17 +424,18 @@ export const getProfilSaya = async (req, res) => {
 
 export const kemaskiniProfilSaya = async (req, res) => {
     const no_kp = req.user.no_kp;
-    const { nama_penuh, email, no_tel, saiz_baju, nama_majikan, gambar } = req.body;
+    const { nama_penuh, email, no_tel, saiz_baju, gambar } = req.body;
     try {
         const query = `
-            UPDATE senarai_staff 
-            SET nama_pegawai = ?, penempatan = ?, emel_kelab = ?, no_tel = ?, saiz_baju = ?, gambar = ? 
+            UPDATE users 
+            SET nama_pegawai = IFNULL(?, nama_pegawai), 
+                emel = IFNULL(?, emel), 
+                phone = IFNULL(?, phone), 
+                saiz_baju = IFNULL(?, saiz_baju), 
+                gambar = IFNULL(?, gambar)
             WHERE no_kp = ?
         `;
-        await db.query(query, [nama_penuh, nama_majikan, email, no_tel, saiz_baju, gambar, no_kp]);
-        
-        if (email) await db.query(`UPDATE users SET email = ? WHERE no_kp = ?`, [email, no_kp]);
-
+        await db.query(query, [nama_penuh, email, no_tel, saiz_baju, gambar, no_kp]);
         res.status(200).json({ success: true, message: "Profil berjaya dikemas kini!" });
     } catch (error) {
         res.status(500).json({ success: false, message: "Gagal mengemas kini profil." });
