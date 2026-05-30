@@ -13,6 +13,7 @@ import adminRoutes from './routes/adminRoutes.js';
 import userRoutes from './routes/userRoutes.js';
 import bayaranRoutes from './routes/bayaranRoutes.js';
 import bantuanRoutes from './routes/bantuanRoutes.js';
+import acaraRoutes from './routes/acaraRoutes.js';
 
 import eventBus from './utils/eventEmitter.js';
 import { requestLogger, errorLogger } from './middleware/logMiddleware.js';
@@ -62,6 +63,7 @@ app.use('/api/admin', adminRoutes);
 app.use('/api/user', userRoutes); // FIX: Ditukar kepada '/api/user' untuk elak konflik dengan memberRoutes
 app.use('/api/bayaran', bayaranRoutes);
 app.use('/api/bantuan', bantuanRoutes);
+app.use('/api/acara', acaraRoutes);
 
 app.use(errorLogger);
 

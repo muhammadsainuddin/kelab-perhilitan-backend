@@ -1,0 +1,40 @@
+import express from 'express';
+import {
+    // Ahli
+    senaraiAcaraAktif,
+    sertaiAcara,
+    batalSertai,
+    // Admin
+    ciptaAcara,
+    senaraiSemuaAcara,
+    kemaskiniAcara,
+    senaraiPesertaAcara,
+    padamAcara
+} from '../controllers/acaraController.js';
+import { verifyToken, requireRole } from '../middleware/authMiddleware.js';
+import { upload } from '../middleware/uploadMiddleware.js';
+
+const router = express.Router();
+
+// Semua laluan memerlukan log masuk
+router.use(verifyToken);
+
+// ------------------------------------------
+// LALUAN AHLI
+// ------------------------------------------
+router.get('/aktif', senaraiAcaraAktif);            // senarai acara aktif
+router.post('/daftar', sertaiAcara);                // daftar acara
+router.delete('/batal/:acara_id', batalSertai);     // batal pendaftaran
+
+// ------------------------------------------
+// LALUAN ADMIN (Admin / Super Admin / Bendahari)
+// ------------------------------------------
+const adminOnly = requireRole(['Admin', 'Super Admin', 'Bendahari']);
+
+router.post('/admin/cipta', adminOnly, upload.single('poster'), ciptaAcara);
+router.get('/admin/semua', adminOnly, senaraiSemuaAcara);
+router.put('/admin/kemaskini/:id', adminOnly, upload.single('poster'), kemaskiniAcara);
+router.get('/admin/peserta/:id', adminOnly, senaraiPesertaAcara);
+router.delete('/admin/padam/:id', adminOnly, padamAcara);
+
+export default router;
