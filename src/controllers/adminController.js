@@ -1,6 +1,7 @@
 import db from '../config/db.js';
 import bcrypt from 'bcryptjs';
 import { janaNoAhliBaru } from '../utils/keahlianHelper.js';
+import { semakStatusBerbayar } from '../utils/keahlianHelper.js';
 
 // =====================================================================
 // NOTA SELURUH FAIL:
@@ -13,6 +14,46 @@ import { janaNoAhliBaru } from '../utils/keahlianHelper.js';
 
 
 // ==========================================
+// PROFIL 360: Tarik Profil Lengkap Ahli (Modular)
+// ==========================================
+export const getProfilAhliLengkap = async (req, res) => {
+    const { no_kp } = req.params;
+
+    try {
+        const query = `
+            SELECT 
+                u.no_kp, u.nama_pegawai, u.gred_penyandang_sspa AS gred_sspa, 
+                p.nama_penempatan AS penempatan, u.penempatan_id,
+                u.emel AS email, u.phone, u.saiz_baju, u.jenis_potongan, 
+                u.yuran_kelab_bulanan, u.no_akaun_bank, u.nama_bank,
+                u.nama_waris, u.no_phone_waris, u.akaun_bank_waris,
+                u.nama_bank_waris, u.status_ahli, u.no_ahli,
+                u.gambar, u.role
+            FROM users u
+            LEFT JOIN penempatan p ON u.penempatan_id = p.id
+            WHERE u.no_kp = ?
+        `;
+        const [rows] = await db.query(query, [no_kp]);
+
+        if (rows.length === 0) {
+            return res.status(404).json({ success: false, message: "Rekod kakitangan tidak ditemui." });
+        }
+
+        let profil = rows[0];
+
+        // Guna helper modular yang sama dengan ahli untuk semak status yuran
+        const isPaid = await semakStatusBerbayar(no_kp, profil.jenis_potongan);
+
+        profil.is_paid = isPaid;
+        profil.status_yuran = isPaid ? 'AHLI BERBAYAR' : 'YURAN TERTUNGGAK';
+
+        res.status(200).json({ success: true, data: profil });
+    } catch (error) {
+        console.error("Ralat Tarik Profil Penuh Admin:", error);
+        res.status(500).json({ success: false, message: "Ralat menarik data profil lengkap." });
+    }
+};
+// ==========================================
 // 1. PENGURUSAN BANTUAN KEBAJIKAN
 // ==========================================
 export const senaraiKebajikan = async (req, res) => {
@@ -21,7 +62,7 @@ export const senaraiKebajikan = async (req, res) => {
             SELECT 
                 b.id, b.no_kp, u.nama_pegawai, p.nama_penempatan AS penempatan,
                 b.jenis_bantuan, b.keterangan, b.dokumen_sokongan, 
-                b.status_permohonan, b.tarikh_mohon
+                b.status_permohonan, b.amaun_lulus, b.tarikh_mohon
             FROM bantuan_kebajikan b
             JOIN users u ON b.no_kp = u.no_kp
             LEFT JOIN penempatan p ON u.penempatan_id = p.id
@@ -37,12 +78,44 @@ export const senaraiKebajikan = async (req, res) => {
 
 export const kemaskiniStatusKebajikan = async (req, res) => {
     const { id } = req.params;
-    const { status_permohonan } = req.body;
+    const { status_permohonan, amaun_lulus } = req.body;
+    const admin_id = req.user?.no_kp || 'ADMIN'; // ID Admin yang merekodkan
+
+    const conn = await db.getConnection();
     try {
-        await db.query(`UPDATE bantuan_kebajikan SET status_permohonan = ? WHERE id = ?`, [status_permohonan, id]);
-        res.status(200).json({ success: true, message: `Status dikemas kini kepada: ${status_permohonan}` });
+        await conn.beginTransaction();
+
+        // Kemaskini status dan amaun lulus
+        await conn.query(
+            `UPDATE bantuan_kebajikan SET status_permohonan = ?, amaun_lulus = ? WHERE id = ?`, 
+            [status_permohonan, amaun_lulus || null, id]
+        );
+
+        // Jika LULUS, automatik rekodkan ke BUKU TUNAI (transaksi_kewangan)
+        if (status_permohonan === 'LULUS' && amaun_lulus > 0) {
+            // Dapatkan maklumat pemohon untuk direkodkan
+            const [[bantuan]] = await conn.query('SELECT no_kp, jenis_bantuan FROM bantuan_kebajikan WHERE id = ?', [id]);
+
+            await conn.query(`
+                INSERT INTO transaksi_kewangan (jenis_aliran, kategori, amaun, rujukan, nota, no_kp_pihak, direkod_oleh)
+                VALUES ('KELUAR', 'KEBAJIKAN', ?, ?, ?, ?, ?)
+            `, [
+                amaun_lulus,
+                `BANTUAN-${id}`, // Rujukan
+                `Sumbangan Kelab: ${bantuan.jenis_bantuan}`, // Nota
+                bantuan.no_kp, // Ahli yang menerima
+                admin_id // Admin yang meluluskan
+            ]);
+        }
+
+        await conn.commit();
+        res.status(200).json({ success: true, message: `Permohonan telah diluluskan dan direkod ke buku tunai.` });
     } catch (error) {
-        res.status(500).json({ success: false, message: "Ralat pelayan." });
+        await conn.rollback();
+        console.error("Ralat kemaskini kebajikan:", error);
+        res.status(500).json({ success: false, message: "Ralat pada pelayan. Gagal mengemaskini status." });
+    } finally {
+        conn.release();
     }
 };
 
@@ -476,5 +549,23 @@ export const tukarKatalaluan = async (req, res) => {
         res.status(200).json({ success: true, message: "Kata laluan berjaya ditukar!" });
     } catch (error) {
         res.status(500).json({ success: false, message: "Ralat pada pelayan." });
+    }
+};
+
+export const getAcaraAhli = async (req, res) => {
+    try {
+        const { no_kp } = req.params;
+        const [rows] = await db.query(`
+            SELECT a.nama_acara, a.jenis_acara, p.kategori, p.catatan, 
+                   DATE_FORMAT(a.tarikh_acara, '%d-%m-%Y') AS tarikh_acara,
+                   DATE_FORMAT(p.tarikh_daftar, '%d-%m-%Y') AS tarikh_daftar
+            FROM penyertaan_acara p
+            JOIN acara a ON p.acara_id = a.id
+            WHERE p.no_kp = ?
+            ORDER BY a.tarikh_acara DESC
+        `, [no_kp]);
+        res.status(200).json({ success: true, data: rows });
+    } catch (error) {
+        res.status(500).json({ success: false, message: "Gagal menarik rekod acara." });
     }
 };

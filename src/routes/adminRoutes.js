@@ -15,8 +15,11 @@ import {
     tukarKatalaluan,
     getStatistikTunggakan,
     getAllResitBayaran,
-    getDirektoriBersepadu
+    getDirektoriBersepadu,
+    getAcaraAhli,
+    getProfilAhliLengkap
 } from '../controllers/adminController.js';
+
 import { verifyToken, requireRole } from '../middleware/authMiddleware.js';
 
 const router = express.Router();
@@ -63,5 +66,12 @@ router.put('/berhenti/:id/lulus', kemaskiniBerhentiAhli);
 // ------------------------------------------
 router.get('/statistik-tunggakan', getStatistikTunggakan);
 router.get('/direktori-bersepadu', getDirektoriBersepadu);
+
+router.get('/acara-ahli/:no_kp', verifyToken, requireRole(['Admin', 'Super Admin']), getAcaraAhli);
+
+
+
+// Tambah laluan ini di bawah kumpulan route admin yang lain
+router.get('/profil-ahli/:no_kp', verifyToken, requireRole(['Admin', 'Super Admin']), getProfilAhliLengkap);
 
 export default router;

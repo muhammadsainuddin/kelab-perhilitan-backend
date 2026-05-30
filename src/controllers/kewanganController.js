@@ -1,37 +1,6 @@
 import db from '../config/db.js';
 
 // ==========================================
-// HELPER: Auto-cipta jadual jika belum wujud
-// Guna kolasi utf8mb4_unicode_ci supaya
-// serasi dengan jadual 'users' sedia ada
-// ==========================================
-const pastikanJadualWujud = async () => {
-    // Cipta jadual dengan kolasi yang betul
-    await db.query(`
-        CREATE TABLE IF NOT EXISTS transaksi_kewangan (
-            id               INT AUTO_INCREMENT PRIMARY KEY,
-            jenis_aliran     ENUM('MASUK','KELUAR') NOT NULL,
-            kategori         ENUM('YURAN','KEDAI','KEBAJIKAN','ACARA','LAIN') NOT NULL DEFAULT 'LAIN',
-            amaun            DECIMAL(10,2) NOT NULL DEFAULT 0.00,
-            rujukan          VARCHAR(150)  COLLATE utf8mb4_unicode_ci DEFAULT NULL,
-            nota             TEXT          COLLATE utf8mb4_unicode_ci DEFAULT NULL,
-            no_kp_pihak      VARCHAR(20)   COLLATE utf8mb4_unicode_ci DEFAULT NULL,
-            direkod_oleh     VARCHAR(20)   COLLATE utf8mb4_unicode_ci DEFAULT NULL,
-            tarikh_transaksi DATETIME      DEFAULT CURRENT_TIMESTAMP,
-            INDEX idx_jenis  (jenis_aliran),
-            INDEX idx_kat    (kategori),
-            INDEX idx_tarikh (tarikh_transaksi)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-    `);
-
-    // Jika jadual dah wujud tapi kolasi lama (general_ci), tukar secara automatik
-    await db.query(`
-        ALTER TABLE transaksi_kewangan 
-        CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
-    `);
-};
-
-// ==========================================
 // 1. STATISTIK DASHBOARD KEWANGAN
 //    GET /api/admin/kewangan/statistik?tahun=2025
 // ==========================================
@@ -39,8 +8,6 @@ export const getStatistikKewangan = async (req, res) => {
     const tahun = req.query.tahun || new Date().getFullYear();
 
     try {
-        await pastikanJadualWujud();
-
         const [summary] = await db.query(`
             SELECT
                 COALESCE(SUM(CASE WHEN jenis_aliran = 'MASUK'  THEN amaun END), 0) AS jumlah_masuk,
@@ -105,25 +72,23 @@ export const getSenaraiTransaksi = async (req, res) => {
     const offset = (parseInt(page) - 1) * parseInt(limit);
 
     try {
-        await pastikanJadualWujud();
-
         let conditions = [];
         let params = [];
 
         if (jenis)    { conditions.push('t.jenis_aliran = ?'); params.push(jenis); }
         if (kategori) { conditions.push('t.kategori = ?');     params.push(kategori); }
         if (cari) {
-            conditions.push('(t.rujukan LIKE ? OR t.nota LIKE ? OR t.no_kp_pihak LIKE ?)');
-            params.push(`%${cari}%`, `%${cari}%`, `%${cari}%`);
+            conditions.push('(t.rujukan LIKE ? OR t.nota LIKE ? OR t.penerima_bayaran LIKE ? OR u.nama_pegawai LIKE ?)');
+            params.push(`%${cari}%`, `%${cari}%`, `%${cari}%`, `%${cari}%`);
         }
 
         const where = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';
 
-        // Guna CONVERT pada kolom JOIN untuk elak konflik kolasi
+        // Guna CONVERT pada kolom JOIN untuk elak konflik kolasi utf8mb4
         const [rows] = await db.query(`
             SELECT
                 t.id, t.jenis_aliran, t.kategori, t.amaun,
-                t.rujukan, t.nota, t.no_kp_pihak,
+                t.rujukan, t.nota, t.penerima_bayaran,
                 u.nama_pegawai AS nama_ahli,
                 DATE_FORMAT(t.tarikh_transaksi, '%d-%m-%Y %H:%i') AS tarikh
             FROM transaksi_kewangan t
@@ -136,7 +101,7 @@ export const getSenaraiTransaksi = async (req, res) => {
         `, [...params, parseInt(limit), offset]);
 
         const [[{ total }]] = await db.query(
-            `SELECT COUNT(*) AS total FROM transaksi_kewangan t ${where}`,
+            `SELECT COUNT(*) AS total FROM transaksi_kewangan t LEFT JOIN users u ON CONVERT(t.no_kp_pihak USING utf8mb4) COLLATE utf8mb4_unicode_ci = CONVERT(u.no_kp USING utf8mb4) COLLATE utf8mb4_unicode_ci ${where}`,
             params
         );
 
@@ -158,20 +123,27 @@ export const getSenaraiTransaksi = async (req, res) => {
 // ==========================================
 export const rekodKeluar = async (req, res) => {
     const no_kp_admin = req.user.no_kp;
-    const { kategori, amaun, nota, rujukan, no_kp_pihak } = req.body;
+    const { kategori, amaun, nota, rujukan, no_kp_pihak, penerima_bayaran } = req.body;
 
     if (!kategori || !amaun || parseFloat(amaun) <= 0) {
         return res.status(400).json({ success: false, message: 'Sila isi kategori dan amaun yang sah.' });
     }
 
-    try {
-        await pastikanJadualWujud();
+    let kpPenerima = null;
+    let namaPenerima = null;
 
+    if (kategori === 'KEBAJIKAN') {
+        kpPenerima = no_kp_pihak;
+    } else {
+        namaPenerima = penerima_bayaran;
+    }
+
+    try {
         await db.query(`
             INSERT INTO transaksi_kewangan
-                (jenis_aliran, kategori, amaun, rujukan, nota, no_kp_pihak, direkod_oleh)
-            VALUES ('KELUAR', ?, ?, ?, ?, ?, ?)
-        `, [kategori, parseFloat(amaun), rujukan || null, nota || null, no_kp_pihak || null, no_kp_admin]);
+                (jenis_aliran, kategori, amaun, rujukan, nota, no_kp_pihak, penerima_bayaran, direkod_oleh)
+            VALUES ('KELUAR', ?, ?, ?, ?, ?, ?, ?)
+        `, [kategori, parseFloat(amaun), rujukan || null, nota || null, kpPenerima, namaPenerima, no_kp_admin]);
 
         return res.status(201).json({ success: true, message: 'Rekod perbelanjaan berjaya disimpan.' });
 
@@ -189,14 +161,12 @@ export const eksportCSV = async (req, res) => {
     const tahun = req.query.tahun || new Date().getFullYear();
 
     try {
-        await pastikanJadualWujud();
-
         const [rows] = await db.query(`
             SELECT
                 t.id,
                 DATE_FORMAT(t.tarikh_transaksi, '%d/%m/%Y %H:%i') AS tarikh,
                 t.jenis_aliran, t.kategori, t.amaun, t.rujukan, t.nota,
-                COALESCE(u.nama_pegawai, t.no_kp_pihak, '-') AS pihak
+                COALESCE(u.nama_pegawai, t.penerima_bayaran, '-') AS pihak
             FROM transaksi_kewangan t
             LEFT JOIN users u 
                 ON CONVERT(t.no_kp_pihak USING utf8mb4) COLLATE utf8mb4_unicode_ci 
