@@ -1,11 +1,13 @@
 import express from 'express';
-import { 
-    senaraiKebajikan, 
-    kemaskiniStatusKebajikan, 
-    senaraiBerhentiAhli, 
+import {
+    senaraiKebajikan,
+    kemaskiniStatusKebajikan,
+    senaraiBerhentiAhli,
     kemaskiniBerhentiAhli,
     senaraiSemuaAhli,
     kemaskiniAhli,
+    kemaskiniProfilAhli,
+    getBelumDaftar,
     daftarAhliManual,
     janaNoAhliBiroPukal,
     senaraiSemuaStaff,
@@ -38,9 +40,11 @@ router.put('/tukar-katalaluan', tukarKatalaluan);
 // PENGURUSAN AHLI
 // ------------------------------------------
 router.get('/semua-ahli', senaraiSemuaAhli);
+router.get('/belum-daftar', getBelumDaftar);
 router.put('/kemaskini-ahli/:no_kp', kemaskiniAhli);
+router.put('/kemaskini-profil-ahli/:no_kp', kemaskiniProfilAhli);
 router.post('/daftar-ahli', daftarAhliManual);
-router.post('/jana-no-ahli-biro', janaNoAhliBiroPukal); // jana pukal Biro Angkasa
+router.post('/jana-no-ahli-biro', janaNoAhliBiroPukal);
 
 // ------------------------------------------
 // PENGURUSAN INDUK PENGGUNA (IMPORT CSV)

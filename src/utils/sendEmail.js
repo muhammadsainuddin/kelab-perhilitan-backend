@@ -1,5 +1,6 @@
 import nodemailer from 'nodemailer';
 import dotenv from 'dotenv';
+import { KELAB } from '../config/kelab.js';
 
 dotenv.config();
 
@@ -15,7 +16,7 @@ const transporter = nodemailer.createTransport({
 const sendEmail = async (options) => {
     // 2. Tetapkan pilihan e-mel
     const mailOptions = {
-        from: `"AIGEO Portal" <${process.env.EMAIL_USER}>`, // Ditukar supaya lebih rasmi
+        from: `"${KELAB.namaPendek}" <${process.env.EMAIL_USER}>`, // Nama rasmi pertubuhan
         to: options.email,
         subject: options.subject,
         html: options.message

@@ -11,6 +11,18 @@ import { messages, getLang } from '../utils/lang.js';
 export const register = async (req, res) => {
     const { no_kp, email, password, no_tel } = req.body;
 
+    // 0. Validasi input sisi pelayan (jangan bergantung pada frontend sahaja)
+    if (!no_kp || !email || !password) {
+        return res.status(400).json({ message: "No. Kad Pengenalan, e-mel dan kata laluan wajib diisi." });
+    }
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+        return res.status(400).json({ message: "Format e-mel tidak sah." });
+    }
+    if (String(password).length < 8) {
+        return res.status(400).json({ message: "Kata laluan mestilah sekurang-kurangnya 8 aksara." });
+    }
+
     try {
         // 1. Semak jika kakitangan wujud dalam jadual users (berdasarkan import CSV)
         const [users] = await db.query('SELECT * FROM users WHERE no_kp = ?', [no_kp]);
@@ -108,8 +120,10 @@ export const forgotPassword = async (req, res) => {
         const [users] = await db.query(query, [email]);
         const user = users[0];
 
+        // Elak user enumeration: jangan dedahkan sama ada e-mel wujud.
+        // Balas mesej generik yang sama; hanya hantar e-mel jika user benar-benar wujud.
         if (!user) {
-            return res.status(404).json({ message: msg.noUser });
+            return res.status(200).json({ message: msg.resetEmailSent });
         }
 
         const resetToken = crypto.randomBytes(32).toString('hex');

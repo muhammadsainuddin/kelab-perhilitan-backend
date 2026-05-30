@@ -1,6 +1,7 @@
 // src/utils/toyyibpay.js
 import axios from 'axios';
 import dotenv from 'dotenv';
+import { KELAB, footerEmelHTML } from '../config/kelab.js';
 
 dotenv.config();
 
@@ -30,7 +31,8 @@ export const janaBilFPX = async ({
             <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; border: 1px solid #e5e7eb; border-radius: 12px; overflow: hidden;">
                 <div style="background-color: #08151D; color: #87BCB5; padding: 24px; text-align: center;">
                     <h2 style="margin: 0; font-size: 18px; text-transform: uppercase;">Resit Rasmi Pembayaran</h2>
-                    <p style="margin: 4px 0 0; font-size: 11px; color: #D0D7D7;">KELAB PERHILITAN MALAYSIA</p>
+                    <p style="margin: 6px 0 0; font-size: 11px; color: #D0D7D7; line-height: 1.4;">${KELAB.nama}</p>
+                    <p style="margin: 3px 0 0; font-size: 10px; color: #9fb3b3;">No. Pendaftaran: ${KELAB.noPertubuhan}</p>
                 </div>
                 <div style="padding: 24px; color: #333333; line-height: 1.5; font-size: 13px;">
                     <p>Salam Sejahtera <b>${user.nama_pegawai}</b>,</p>
@@ -42,6 +44,7 @@ export const janaBilFPX = async ({
                         </table>
                     </div>
                 </div>
+                ${footerEmelHTML()}
             </div>
         `;
     }
@@ -83,4 +86,23 @@ export const janaBilFPX = async ({
     const billUrl = isDev ? `https://dev.toyyibpay.com/${billCode}` : `https://toyyibpay.com/${billCode}`;
 
     return { billCode, billUrl };
+};
+
+/**
+ * Sahkan status sebenar sesuatu bil terus dengan pelayan ToyyibPay.
+ * JANGAN percaya status yang dihantar dalam body callback — sentiasa sahkan di sini.
+ * @returns {Promise<'BERJAYA'|'GAGAL'|'PENDING'>}
+ */
+export const semakTransaksiBil = async (billCode) => {
+    const checkUrl = TOYYIBPAY_URL.replace('createBill', 'getBillTransactions');
+    const formData = new URLSearchParams({ billCode });
+
+    const res = await axios.post(checkUrl, formData.toString(), {
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+    });
+
+    if (!res.data || res.data.length === 0) return 'PENDING';
+    if (res.data.find(tx => tx.billpaymentStatus == '1')) return 'BERJAYA';
+    if (res.data.find(tx => tx.billpaymentStatus == '3')) return 'GAGAL';
+    return 'PENDING';
 };

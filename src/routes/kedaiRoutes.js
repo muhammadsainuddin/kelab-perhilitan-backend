@@ -5,7 +5,7 @@ import {
     buatPesanan, webhookKedai, semakPesanan, senaraiPesananAhli
 } from '../controllers/kedaiController.js';
 import { verifyToken, requireRole } from '../middleware/authMiddleware.js';
-import { upload } from '../middleware/uploadMiddleware.js';
+import { uploadGambar, mampatGambar } from '../middleware/uploadMiddleware.js';
 
 const router = express.Router();
 
@@ -21,8 +21,8 @@ router.get('/pesanan-saya', verifyToken, senaraiPesananAhli);
 
 // ── Admin sahaja (upload.array untuk pelbagai gambar - max 6) ──
 router.get('/admin/produk',             requireRole(['Admin','Super Admin']), senaraiProduk);
-router.post('/admin/produk',            requireRole(['Admin','Super Admin']), upload.array('gambar', 6), tambahProduk);
-router.put('/admin/produk/:id',         requireRole(['Admin','Super Admin']), upload.array('gambar', 6), kemaskiniProduk);
+router.post('/admin/produk',            requireRole(['Admin','Super Admin']), uploadGambar('gambar', 6), mampatGambar, tambahProduk);
+router.put('/admin/produk/:id',         requireRole(['Admin','Super Admin']), uploadGambar('gambar', 6), mampatGambar, kemaskiniProduk);
 router.delete('/admin/produk/:id',      requireRole(['Admin','Super Admin']), padamProduk);
 router.get('/admin/pesanan',            requireRole(['Admin','Super Admin']), senaraiPesanan);
 router.put('/admin/pesanan/:id/status', requireRole(['Admin','Super Admin']), kemaskiniStatusPesanan);

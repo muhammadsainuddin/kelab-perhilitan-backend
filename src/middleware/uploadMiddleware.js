@@ -1,6 +1,7 @@
 import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
+import sharp from 'sharp';
 import { fileURLToPath } from 'url';
 
 // Dapatkan laluan direktori semasa (untuk ES Modules)
@@ -45,23 +46,83 @@ const storage = multer.diskStorage({
     }
 });
 
-// Penapis fail (Terima gambar, audio, video dan PDF sahaja)
+// Senarai putih sambungan fail yang dibenarkan (SVG sengaja DITOLAK — risiko XSS bila disajikan statik)
+const allowedExt = [
+    '.jpg', '.jpeg', '.jfif', '.png', '.gif', '.webp',  // gambar (jfif = jpeg)
+    '.mp3', '.wav', '.m4a', '.ogg', '.mp4', '.webm',    // audio/video
+    '.pdf'                                              // dokumen
+];
+
+// Penapis fail: sahkan KEDUA-DUA mimetype DAN sambungan fail (mimetype boleh dipalsukan klien)
 const fileFilter = (req, file, cb) => {
-    if (
-        file.mimetype.startsWith('image/') || 
-        file.mimetype.startsWith('audio/') || 
+    const ext = path.extname(file.originalname).toLowerCase();
+    const mimeOk =
+        file.mimetype.startsWith('image/') ||
+        file.mimetype.startsWith('audio/') ||
         file.mimetype.startsWith('video/') ||
-        file.mimetype === 'application/pdf' // TAMBAHAN BARU: Benarkan PDF
-    ) {
+        file.mimetype === 'application/pdf';
+
+    if (mimeOk && file.mimetype !== 'image/svg+xml' && allowedExt.includes(ext)) {
         cb(null, true);
     } else {
-        cb(new Error('Format fail tidak disokong. Sila muat naik gambar, audio/video atau dokumen PDF sahaja.'), false);
+        cb(new Error('Format fail tidak disokong. Gunakan gambar (JPG, JFIF, PNG, WEBP), audio/video, atau PDF sahaja.'), false);
     }
 };
 
 // Cipta middleware upload
-export const upload = multer({ 
+export const upload = multer({
     storage: storage,
     fileFilter: fileFilter,
     limits: { fileSize: 20 * 1024 * 1024 } // Had saiz fail: 20MB kekal sama
 });
+
+// ──────────────────────────────────────────────────────────────
+// Pembungkus upload.array yang menukar ralat multer kepada JSON 400
+// (supaya frontend dapat papar notifikasi jelas, bukan 500 tanpa mesej)
+// ──────────────────────────────────────────────────────────────
+export const uploadGambar = (field, max) => (req, res, next) => {
+    upload.array(field, max)(req, res, (err) => {
+        if (err) {
+            const msg = err.code === 'LIMIT_FILE_SIZE'
+                ? 'Saiz fail terlalu besar (maksimum 20MB).'
+                : (err.message || 'Muat naik fail gagal.');
+            return res.status(400).json({ success: false, message: msg });
+        }
+        next();
+    });
+};
+
+// ──────────────────────────────────────────────────────────────
+// Middleware: mampatkan & normalkan gambar selepas dimuat naik.
+// Semua gambar (termasuk JFIF/PNG/WEBP) ditukar kepada JPEG termampat
+// untuk jimat ruang server. Dijalankan SELEPAS multer, SEBELUM controller.
+// ──────────────────────────────────────────────────────────────
+export const mampatGambar = async (req, res, next) => {
+    if (!req.files || req.files.length === 0) return next();
+    try {
+        for (const f of req.files) {
+            if (!f.mimetype || !f.mimetype.startsWith('image/') || f.mimetype === 'image/gif') continue;
+            const dir = path.dirname(f.path);
+            const namaBaru = path.basename(f.filename, path.extname(f.filename)) + '.jpg';
+            const laluanBaru = path.join(dir, namaBaru);
+
+            const buffer = await sharp(f.path)
+                .rotate() // hormati orientasi EXIF
+                .resize({ width: 1280, height: 1280, fit: 'inside', withoutEnlargement: true })
+                .jpeg({ quality: 75, mozjpeg: true })
+                .toBuffer();
+
+            await fs.promises.writeFile(laluanBaru, buffer);
+            if (laluanBaru !== f.path) await fs.promises.unlink(f.path).catch(() => {});
+
+            f.filename = namaBaru;
+            f.path = laluanBaru;
+            f.mimetype = 'image/jpeg';
+            f.size = buffer.length;
+        }
+        next();
+    } catch (e) {
+        console.error('[UPLOAD] mampatGambar:', e.message);
+        next(); // jangan blok proses; guna fail asal jika mampatan gagal
+    }
+};

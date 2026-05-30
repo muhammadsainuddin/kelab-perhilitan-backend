@@ -1,5 +1,6 @@
 import db from '../config/db.js';
-import { janaBilFPX } from '../utils/toyyibpay.js';
+import { janaBilFPX, semakTransaksiBil } from '../utils/toyyibpay.js';
+import { prosesKedaiBerjaya } from '../utils/paymentSync.js';
 
 // ============================================================
 // ── ADMIN: PENGURUSAN PRODUK
@@ -160,12 +161,14 @@ export const senaraiPesanan = async (req, res) => {
     try {
         const [pesanan] = await db.query(`
             SELECT p.id, p.no_kp, u.nama_pegawai AS nama_ahli,
+                   u.phone AS no_tel, pen.nama_penempatan AS ptj,
                    p.billCode, p.jumlah_keseluruhan, p.is_percuma, p.status_pesanan, p.nota_admin,
                    DATE_FORMAT(p.tarikh_pesanan, '%d-%m-%Y %H:%i') AS tarikh_pesanan
             FROM pesanan_kedai p
-            LEFT JOIN users u 
+            LEFT JOIN users u
                 ON CONVERT(p.no_kp USING utf8mb4) COLLATE utf8mb4_unicode_ci
                  = CONVERT(u.no_kp USING utf8mb4) COLLATE utf8mb4_unicode_ci
+            LEFT JOIN penempatan pen ON u.penempatan_id = pen.id
             ORDER BY p.tarikh_pesanan DESC
         `);
         for (const p of pesanan) {
@@ -321,66 +324,34 @@ export const buatPesanan = async (req, res) => {
 // ============================================================
 export const webhookKedai = async (req, res) => {
     const { pesananId } = req.params;
-    const { status_id, billcode } = req.body;
+    const { billcode } = req.body;
 
-    const conn = await db.getConnection();
     try {
-        await conn.beginTransaction();
-        const [[pesanan]] = await conn.query('SELECT * FROM pesanan_kedai WHERE id = ? FOR UPDATE', [pesananId]);
-        if (!pesanan) { await conn.rollback(); return res.status(404).send('Tidak dijumpai.'); }
+        const [[pesanan]] = await db.query('SELECT billCode, status_pesanan FROM pesanan_kedai WHERE id = ?', [pesananId]);
+        if (!pesanan) return res.status(404).send('Tidak dijumpai.');
 
-        if (['DIBAYAR','DIPROSES','SELESAI'].includes(pesanan.status_pesanan)) {
-            await conn.rollback(); return res.status(200).send('OK');
-        }
-
-        if (status_id == '1') {
-            await conn.query('UPDATE pesanan_kedai SET status_pesanan = "DIBAYAR" WHERE id = ?', [pesananId]);
-            const [items] = await conn.query('SELECT produk_id, kuantiti, saiz FROM item_pesanan WHERE pesanan_id = ?', [pesananId]);
-            
-            for (const it of items) {
-                const [[prod]] = await conn.query('SELECT id, is_variasi, variasi_data, stok_semasa FROM produk_kedai WHERE id = ? FOR UPDATE', [it.produk_id]);
-                if (!prod) continue;
-
-                if (prod.is_variasi) {
-                    let vData = [];
-                    try { vData = JSON.parse(prod.variasi_data || '[]'); } catch(e){}
-                    let allZero = true;
-                    vData = vData.map(v => {
-                        if (v.nama === it.saiz) v.stok = Math.max(0, parseInt(v.stok) - it.kuantiti);
-                        if (parseInt(v.stok) > 0) allZero = false;
-                        return v;
-                    });
-                    await conn.query('UPDATE produk_kedai SET variasi_data = ?, status = ? WHERE id = ?', 
-                        [JSON.stringify(vData), allZero ? 'HABIS' : 'AKTIF', prod.id]);
-                } else {
-                    await conn.query('UPDATE produk_kedai SET stok_semasa = GREATEST(0, stok_semasa - ?) WHERE id = ?', [it.kuantiti, prod.id]);
-                    await conn.query('UPDATE produk_kedai SET status = "HABIS" WHERE id = ? AND stok_semasa = 0', [prod.id]);
-                }
-            }
-
-            try {
-                // Rekod masuk ke buku tunai
-                await conn.query(`
-                    INSERT INTO transaksi_kewangan (jenis_aliran, kategori, amaun, rujukan, nota, no_kp_pihak)
-                    VALUES ('MASUK','KEDAI',?,?,?,?)
-                `, [pesanan.jumlah_keseluruhan, billcode || pesanan.billCode,
-                    `Jualan Kedai — Pesanan #${pesananId}`, pesanan.no_kp]);
-            } catch(e) { 
-                // Abaikan ralat jika jadual kewangan tiada
-            }
-            await conn.commit();
-            return res.status(200).send('OK');
-        } else {
-            await conn.query('UPDATE pesanan_kedai SET status_pesanan = "DIBATALKAN" WHERE id = ?', [pesananId]);
-            await conn.commit();
+        // Sudah diproses — balas OK tanpa buat apa-apa (idempotent)
+        if (['DIBAYAR', 'DIPROSES', 'SELESAI'].includes(pesanan.status_pesanan)) {
             return res.status(200).send('OK');
         }
+
+        // PENTING: Jangan percaya status_id dari body callback (boleh dipalsukan).
+        // Sahkan status sebenar terus dengan pelayan ToyyibPay.
+        const kod = pesanan.billCode || billcode;
+        const status = await semakTransaksiBil(kod);
+
+        if (status === 'BERJAYA') {
+            // Logik tolak stok + rekod kewangan (transaksi atomik) di utils/paymentSync.js
+            await prosesKedaiBerjaya(pesananId);
+        } else if (status === 'GAGAL') {
+            await db.query('UPDATE pesanan_kedai SET status_pesanan = "DIBATALKAN" WHERE id = ? AND status_pesanan = "PENDING"', [pesananId]);
+        }
+        // status PENDING: biarkan kekal PENDING.
+
+        return res.status(200).send('OK');
     } catch (err) {
-        await conn.rollback();
         console.error('[KEDAI] webhook:', err.message);
         return res.status(500).send('Ralat webhook.');
-    } finally {
-        conn.release();
     }
 };
 

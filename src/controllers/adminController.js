@@ -552,6 +552,76 @@ export const tukarKatalaluan = async (req, res) => {
     }
 };
 
+// ==========================================
+// 9. REKOD BELUM DAFTAR APPS
+//    (Ada dalam users tapi tiada password — belum aktifkan akaun)
+// ==========================================
+export const getBelumDaftar = async (req, res) => {
+    try {
+        const query = `
+            SELECT
+                u.no_kp, u.nama_pegawai, u.gred_penyandang_sspa AS gred_sspa,
+                p.nama_penempatan AS penempatan, u.emel AS email, u.phone AS no_tel,
+                u.jenis_potongan, u.no_ahli, u.status_ahli
+            FROM users u
+            LEFT JOIN penempatan p ON u.penempatan_id = p.id
+            WHERE u.password IS NULL OR u.password = ''
+            ORDER BY u.nama_pegawai ASC
+        `;
+        const [rows] = await db.query(query);
+        res.status(200).json({ success: true, data: rows });
+    } catch (error) {
+        console.error("Ralat getBelumDaftar:", error);
+        res.status(500).json({ success: false, message: "Ralat menarik senarai belum daftar." });
+    }
+};
+
+// ==========================================
+// 10. KEMASKINI PROFIL PENUH AHLI (OLEH ADMIN)
+// ==========================================
+export const kemaskiniProfilAhli = async (req, res) => {
+    const { no_kp } = req.params;
+    const { nama_pegawai, email, no_tel, gred_sspa, penempatan, jenis_potongan, yuran_kelab_bulanan, saiz_baju } = req.body;
+
+    try {
+        // Cari / cipta penempatan_id jika penempatan diberikan
+        let penempatanId = undefined;
+        if (penempatan && String(penempatan).trim() !== '') {
+            const nama = String(penempatan).toUpperCase().trim();
+            const [ada] = await db.query('SELECT id FROM penempatan WHERE nama_penempatan = ?', [nama]);
+            if (ada.length > 0) {
+                penempatanId = ada[0].id;
+            } else {
+                const [ins] = await db.query('INSERT INTO penempatan (nama_penempatan) VALUES (?)', [nama]);
+                penempatanId = ins.insertId;
+            }
+        }
+
+        const fields = [];
+        const values = [];
+
+        if (nama_pegawai !== undefined)       { fields.push('nama_pegawai = ?');        values.push(String(nama_pegawai).toUpperCase().trim()); }
+        if (email !== undefined)              { fields.push('emel = ?');                values.push(email || null); }
+        if (no_tel !== undefined)             { fields.push('phone = ?');               values.push(no_tel || null); }
+        if (gred_sspa !== undefined)          { fields.push('gred_penyandang_sspa = ?');values.push(gred_sspa || null); }
+        if (penempatanId !== undefined)       { fields.push('penempatan_id = ?');       values.push(penempatanId); }
+        if (jenis_potongan !== undefined)     { fields.push('jenis_potongan = ?');      values.push(jenis_potongan || null); }
+        if (yuran_kelab_bulanan !== undefined){ fields.push('yuran_kelab_bulanan = ?'); values.push(parseFloat(yuran_kelab_bulanan) || 0); }
+        if (saiz_baju !== undefined)          { fields.push('saiz_baju = ?');           values.push(saiz_baju || null); }
+
+        if (fields.length === 0) {
+            return res.status(400).json({ success: false, message: "Tiada maklumat untuk dikemas kini." });
+        }
+
+        values.push(no_kp);
+        await db.query(`UPDATE users SET ${fields.join(', ')} WHERE no_kp = ?`, values);
+        res.status(200).json({ success: true, message: "Profil ahli berjaya dikemas kini." });
+    } catch (error) {
+        console.error("Ralat kemaskiniProfilAhli:", error);
+        res.status(500).json({ success: false, message: "Gagal mengemaskini profil ahli." });
+    }
+};
+
 export const getAcaraAhli = async (req, res) => {
     try {
         const { no_kp } = req.params;

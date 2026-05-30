@@ -4,15 +4,25 @@
 import expressK from 'express';
 import {
     getStatistikKewangan, getSenaraiTransaksi, rekodKeluar, eksportCSV,
+    getPenyataTahunan, getSenaraiSumbangan, rekodSumbangan, importSumbanganBulk,
 } from '../controllers/kewanganController.js';
 import { verifyToken as vT, requireRole as rR } from '../middleware/authMiddleware.js';
 
 const routerK = expressK.Router();
-routerK.use(vT, rR(['Admin','Super Admin']));
+// Bendahari turut mengurus kewangan kelab (rekod perbelanjaan, sumbangan, penyata)
+routerK.use(vT, rR(['Admin','Super Admin','Bendahari']));
 
-routerK.get('/statistik',  getStatistikKewangan);
-routerK.get('/transaksi',  getSenaraiTransaksi);
-routerK.post('/keluar',    rekodKeluar);
-routerK.get('/eksport',    eksportCSV);
+routerK.get('/statistik',         getStatistikKewangan);
+routerK.get('/transaksi',         getSenaraiTransaksi);
+routerK.post('/keluar',           rekodKeluar);
+routerK.get('/eksport',           eksportCSV);
+
+// Penyata kewangan tahunan
+routerK.get('/penyata-tahunan',   getPenyataTahunan);
+
+// Kutipan sumbangan
+routerK.get('/sumbangan',         getSenaraiSumbangan);
+routerK.post('/sumbangan',        rekodSumbangan);
+routerK.post('/sumbangan/import', importSumbanganBulk);
 
 export default routerK;

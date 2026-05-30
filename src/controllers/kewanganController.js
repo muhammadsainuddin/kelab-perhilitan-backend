@@ -154,6 +154,168 @@ export const rekodKeluar = async (req, res) => {
 };
 
 // ==========================================
+// 5. PENYATA KEWANGAN TAHUNAN
+//    GET /api/admin/kewangan/penyata-tahunan?tahun=2025
+//    Pendapatan & perbelanjaan dipecah ikut kategori + baki.
+// ==========================================
+export const getPenyataTahunan = async (req, res) => {
+    const tahun = req.query.tahun || new Date().getFullYear();
+
+    try {
+        // Pecahan ikut kategori (kedua-dua aliran)
+        const [pecahan] = await db.query(`
+            SELECT jenis_aliran, kategori,
+                   SUM(amaun) AS jumlah, COUNT(*) AS bil
+            FROM transaksi_kewangan
+            WHERE YEAR(tarikh_transaksi) = ?
+            GROUP BY jenis_aliran, kategori
+            ORDER BY jenis_aliran, jumlah DESC
+        `, [tahun]);
+
+        const pendapatan = pecahan
+            .filter(r => r.jenis_aliran === 'MASUK')
+            .map(r => ({ kategori: r.kategori, jumlah: parseFloat(r.jumlah), bil: r.bil }));
+        const perbelanjaan = pecahan
+            .filter(r => r.jenis_aliran === 'KELUAR')
+            .map(r => ({ kategori: r.kategori, jumlah: parseFloat(r.jumlah), bil: r.bil }));
+
+        const jumlahPendapatan  = pendapatan.reduce((a, b) => a + b.jumlah, 0);
+        const jumlahPerbelanjaan = perbelanjaan.reduce((a, b) => a + b.jumlah, 0);
+
+        // Baki bawa ke hadapan (semua tahun sebelum tahun dipilih)
+        const [[bawaResult]] = await db.query(`
+            SELECT
+                COALESCE(SUM(CASE WHEN jenis_aliran='MASUK'  THEN amaun END),0) -
+                COALESCE(SUM(CASE WHEN jenis_aliran='KELUAR' THEN amaun END),0) AS baki_bawa
+            FROM transaksi_kewangan
+            WHERE YEAR(tarikh_transaksi) < ?
+        `, [tahun]);
+        const bakiBawa = parseFloat(bawaResult.baki_bawa) || 0;
+
+        return res.status(200).json({
+            success: true,
+            data: {
+                tahun: parseInt(tahun),
+                pendapatan, perbelanjaan,
+                jumlah_pendapatan: jumlahPendapatan,
+                jumlah_perbelanjaan: jumlahPerbelanjaan,
+                lebihan_kurangan: jumlahPendapatan - jumlahPerbelanjaan,
+                baki_bawa: bakiBawa,
+                baki_akhir: bakiBawa + jumlahPendapatan - jumlahPerbelanjaan,
+            },
+        });
+    } catch (error) {
+        console.error('[KEWANGAN] Gagal tarik penyata tahunan:', error.message);
+        return res.status(500).json({ success: false, message: 'Ralat menarik penyata tahunan.' });
+    }
+};
+
+// ==========================================
+// 6. SUMBANGAN — SENARAI KUTIPAN
+//    GET /api/admin/kewangan/sumbangan?tahun=2025
+// ==========================================
+export const getSenaraiSumbangan = async (req, res) => {
+    const tahun = req.query.tahun || new Date().getFullYear();
+    try {
+        const [rows] = await db.query(`
+            SELECT id, penerima_bayaran AS nama_penyumbang, amaun, rujukan AS program,
+                   nota, DATE_FORMAT(tarikh_transaksi, '%d-%m-%Y') AS tarikh
+            FROM transaksi_kewangan
+            WHERE jenis_aliran = 'MASUK' AND kategori = 'SUMBANGAN'
+              AND YEAR(tarikh_transaksi) = ?
+            ORDER BY tarikh_transaksi DESC, id DESC
+        `, [tahun]);
+        const jumlah = rows.reduce((a, b) => a + parseFloat(b.amaun), 0);
+        return res.status(200).json({ success: true, data: rows, jumlah });
+    } catch (error) {
+        console.error('[KEWANGAN] Gagal tarik sumbangan:', error.message);
+        return res.status(500).json({ success: false, message: 'Ralat menarik senarai sumbangan.' });
+    }
+};
+
+// ==========================================
+// 7. SUMBANGAN — REKOD SATU
+//    POST /api/admin/kewangan/sumbangan
+// ==========================================
+export const rekodSumbangan = async (req, res) => {
+    const no_kp_admin = req.user.no_kp;
+    const { nama_penyumbang, amaun, program, nota, tarikh } = req.body;
+
+    if (!nama_penyumbang || !amaun || parseFloat(amaun) <= 0) {
+        return res.status(400).json({ success: false, message: 'Sila isi nama penyumbang dan amaun yang sah.' });
+    }
+
+    try {
+        await db.query(`
+            INSERT INTO transaksi_kewangan
+                (jenis_aliran, kategori, amaun, rujukan, nota, penerima_bayaran, direkod_oleh, tarikh_transaksi)
+            VALUES ('MASUK', 'SUMBANGAN', ?, ?, ?, ?, ?, ?)
+        `, [
+            parseFloat(amaun), program || null, nota || null,
+            String(nama_penyumbang).trim(), no_kp_admin,
+            tarikh ? new Date(tarikh) : new Date()
+        ]);
+        return res.status(201).json({ success: true, message: 'Sumbangan berjaya direkodkan.' });
+    } catch (error) {
+        console.error('[KEWANGAN] Gagal rekod sumbangan:', error.message);
+        return res.status(500).json({ success: false, message: 'Ralat menyimpan sumbangan.' });
+    }
+};
+
+// ==========================================
+// 8. SUMBANGAN — IMPORT PUKAL (dari CSV yang di-parse di frontend)
+//    POST /api/admin/kewangan/sumbangan/import
+//    Body: { senarai: [{ nama_penyumbang, amaun, program?, nota?, tarikh? }] }
+// ==========================================
+export const importSumbanganBulk = async (req, res) => {
+    const no_kp_admin = req.user.no_kp;
+    const { senarai } = req.body;
+
+    if (!Array.isArray(senarai) || senarai.length === 0) {
+        return res.status(400).json({ success: false, message: 'Tiada data sumbangan dihantar.' });
+    }
+
+    const conn = await db.getConnection();
+    try {
+        await conn.beginTransaction();
+        let berjaya = 0;
+        const dilangkau = [];
+
+        for (let i = 0; i < senarai.length; i++) {
+            const s = senarai[i];
+            const nama = (s.nama_penyumbang || '').toString().trim();
+            const amaun = parseFloat(s.amaun);
+            if (!nama || !amaun || amaun <= 0) {
+                dilangkau.push(i + 1);
+                continue;
+            }
+            await conn.query(`
+                INSERT INTO transaksi_kewangan
+                    (jenis_aliran, kategori, amaun, rujukan, nota, penerima_bayaran, direkod_oleh, tarikh_transaksi)
+                VALUES ('MASUK', 'SUMBANGAN', ?, ?, ?, ?, ?, ?)
+            `, [
+                amaun, s.program || null, s.nota || null, nama, no_kp_admin,
+                s.tarikh ? new Date(s.tarikh) : new Date()
+            ]);
+            berjaya++;
+        }
+
+        await conn.commit();
+        return res.status(201).json({
+            success: true,
+            message: `${berjaya} sumbangan berjaya diimport.` + (dilangkau.length ? ` ${dilangkau.length} baris dilangkau (data tidak lengkap).` : ''),
+            berjaya, dilangkau
+        });
+    } catch (error) {
+        await conn.rollback();
+        console.error('[KEWANGAN] Gagal import sumbangan:', error.message);
+        return res.status(500).json({ success: false, message: 'Ralat semasa import sumbangan.' });
+    } finally {
+        conn.release();
+    }
+};
+
+// ==========================================
 // 4. EKSPORT CSV
 //    GET /api/admin/kewangan/eksport?tahun=2025
 // ==========================================

@@ -204,8 +204,12 @@ export const kemaskiniAcara = async (req, res) => {
         if (no_tel_urusetia !== undefined) { fields.push('no_tel_urusetia = ?'); values.push(no_tel_urusetia || null); }
         if (status !== undefined)          { fields.push('status = ?');          values.push(status); }
 
-        // Jika ada poster baru dimuat naik
-        if (req.file) { fields.push('poster = ?'); values.push(req.file.filename); }
+        // Jika ada poster baru dimuat naik (guna array upload, konsisten dengan cipta)
+        if (req.files && req.files.length > 0) {
+            const posterArray = req.files.map(f => f.filename);
+            fields.push('poster = ?');
+            values.push(JSON.stringify(posterArray));
+        }
 
         if (fields.length === 0) {
             return res.status(400).json({ success: false, message: "Tiada maklumat untuk dikemas kini." });
