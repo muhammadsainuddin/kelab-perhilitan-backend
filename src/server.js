@@ -23,6 +23,22 @@ import kewanganRoutes from './routes/kewanganRoutes.js';
 import eventBus from './utils/eventEmitter.js';
 import { requestLogger, errorLogger } from './middleware/logMiddleware.js';
 import { segerakSemuaPending } from './utils/paymentSync.js';
+import db from './config/db.js';
+
+// Tambah kolum baru jika belum wujud (safe — tidak akan overwrite data sedia ada)
+const runMigrations = async () => {
+    const migrations = [
+        `ALTER TABLE bantuan_kebajikan ADD COLUMN IF NOT EXISTS sebab_tolak TEXT DEFAULT NULL`,
+        `ALTER TABLE bantuan_kebajikan ADD COLUMN IF NOT EXISTS catatan_admin TEXT DEFAULT NULL`,
+        `ALTER TABLE bantuan_kebajikan ADD COLUMN IF NOT EXISTS diproses_oleh VARCHAR(20) DEFAULT NULL`,
+        `ALTER TABLE bantuan_kebajikan ADD COLUMN IF NOT EXISTS tarikh_dikemukakan DATETIME DEFAULT NULL`,
+        `ALTER TABLE bantuan_kebajikan ADD COLUMN IF NOT EXISTS tarikh_keputusan DATETIME DEFAULT NULL`,
+    ];
+    for (const sql of migrations) {
+        try { await db.query(sql); } catch (e) { /* kolum mungkin sudah wujud */ }
+    }
+    console.log('[Migration] bantuan_kebajikan: kolum kebajikan disemak.');
+};
 
 dotenv.config();
 
@@ -46,6 +62,7 @@ app.use((req, res, next) => {
 
 const allowedOrigins = [
     process.env.FRONTEND_URL,
+    process.env.STAGING_URL,
     'http://localhost:5173',
     'http://127.0.0.1:5173',
     'http://localhost:4173',
@@ -89,7 +106,10 @@ app.use('/api/admin/kewangan', kewanganRoutes);
 app.use(errorLogger);
 
 const PORT = process.env.PORT || 5001;
-app.listen(PORT, () => console.log(`🛸 AIGEO Core sedang berjalan di port ${PORT}`));
+app.listen(PORT, async () => {
+    console.log(`🛸 AIGEO Core sedang berjalan di port ${PORT}`);
+    await runMigrations();
+});
 
 // Penyegerakan berkala status bil PENDING (yuran + kedai) dengan ToyyibPay.
 // Bertindak sebagai jaring keselamatan jika webhook gagal sampai, tanpa melambatkan permintaan API.

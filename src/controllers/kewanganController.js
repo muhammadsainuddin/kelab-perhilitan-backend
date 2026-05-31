@@ -316,6 +316,156 @@ export const importSumbanganBulk = async (req, res) => {
 };
 
 // ==========================================
+// 9. PRODUK PALING LARIS (dari pesanan yang selesai)
+//    GET /api/admin/kewangan/produk-laris?tahun=2025
+// ==========================================
+export const getProdukLaris = async (req, res) => {
+    const tahun = req.query.tahun || new Date().getFullYear();
+    const had   = Math.min(parseInt(req.query.had) || 15, 25);
+    try {
+        const [rows] = await db.query(`
+            SELECT
+                pr.id, pr.nama_produk,
+                pr.harga  AS harga_jual,
+                pr.gambar,
+                pr.stok_semasa AS stok_baki,
+                COALESCE(SUM(i.kuantiti), 0) AS unit_terjual,
+                COALESCE(SUM(i.kuantiti * i.harga_seunit), 0) AS hasil_jualan
+            FROM produk_kedai pr
+            LEFT JOIN item_pesanan i ON i.produk_id = pr.id
+            LEFT JOIN pesanan_kedai p ON i.pesanan_id = p.id
+                AND p.status_pesanan IN ('DIBAYAR','DIPROSES','SELESAI')
+                AND YEAR(p.tarikh_pesanan) = ?
+            GROUP BY pr.id, pr.nama_produk, pr.harga, pr.gambar, pr.stok_semasa
+            ORDER BY unit_terjual DESC, hasil_jualan DESC
+            LIMIT ?
+        `, [tahun, had]);
+        return res.status(200).json({
+            success: true,
+            data: rows.map(r => ({
+                ...r,
+                unit_terjual: parseInt(r.unit_terjual)   || 0,
+                hasil_jualan: parseFloat(r.hasil_jualan) || 0,
+                harga_jual:   parseFloat(r.harga_jual)   || 0,
+            })),
+        });
+    } catch (error) {
+        console.error('[KEWANGAN] getProdukLaris:', error.message);
+        return res.status(500).json({ success: false, message: 'Ralat menarik data produk laris.' });
+    }
+};
+
+// ==========================================
+// 10. LAPORAN BULANAN
+//     GET /api/admin/kewangan/laporan-bulanan?tahun=YYYY&bulan=MM
+// ==========================================
+export const getLaporanBulanan = async (req, res) => {
+    const { tahun, bulan } = req.query;
+    if (!tahun || !bulan) {
+        return res.status(400).json({ success: false, message: 'Parameter tahun dan bulan diperlukan.' });
+    }
+    try {
+        const [rows] = await db.query(`
+            SELECT
+                t.id, t.jenis_aliran, t.kategori, t.amaun, t.rujukan, t.nota, t.penerima_bayaran,
+                u.nama_pegawai AS nama_ahli,
+                DATE_FORMAT(t.tarikh_transaksi, '%d-%m-%Y %H:%i') AS tarikh
+            FROM transaksi_kewangan t
+            LEFT JOIN users u
+                ON CONVERT(t.no_kp_pihak USING utf8mb4) COLLATE utf8mb4_unicode_ci
+                 = CONVERT(u.no_kp USING utf8mb4) COLLATE utf8mb4_unicode_ci
+            WHERE YEAR(t.tarikh_transaksi) = ? AND MONTH(t.tarikh_transaksi) = ?
+            ORDER BY t.tarikh_transaksi ASC
+        `, [tahun, bulan]);
+        const masuk  = rows.filter(r => r.jenis_aliran === 'MASUK').reduce((a, b) => a + parseFloat(b.amaun), 0);
+        const keluar = rows.filter(r => r.jenis_aliran === 'KELUAR').reduce((a, b) => a + parseFloat(b.amaun), 0);
+        return res.status(200).json({
+            success: true, data: rows,
+            ringkasan: { masuk, keluar, lebihan: masuk - keluar, bil: rows.length },
+        });
+    } catch (error) {
+        console.error('[KEWANGAN] getLaporanBulanan:', error.message);
+        return res.status(500).json({ success: false, message: 'Ralat menarik laporan bulanan.' });
+    }
+};
+
+// ==========================================
+// 11. LAPORAN HARIAN
+//     GET /api/admin/kewangan/laporan-harian?tarikh=YYYY-MM-DD
+// ==========================================
+export const getLaporanHarian = async (req, res) => {
+    const { tarikh } = req.query;
+    if (!tarikh) {
+        return res.status(400).json({ success: false, message: 'Parameter tarikh (YYYY-MM-DD) diperlukan.' });
+    }
+    try {
+        const [rows] = await db.query(`
+            SELECT
+                t.id, t.jenis_aliran, t.kategori, t.amaun, t.rujukan, t.nota, t.penerima_bayaran,
+                u.nama_pegawai AS nama_ahli,
+                DATE_FORMAT(t.tarikh_transaksi, '%H:%i') AS masa,
+                DATE_FORMAT(t.tarikh_transaksi, '%d-%m-%Y %H:%i') AS tarikh
+            FROM transaksi_kewangan t
+            LEFT JOIN users u
+                ON CONVERT(t.no_kp_pihak USING utf8mb4) COLLATE utf8mb4_unicode_ci
+                 = CONVERT(u.no_kp USING utf8mb4) COLLATE utf8mb4_unicode_ci
+            WHERE DATE(t.tarikh_transaksi) = ?
+            ORDER BY t.tarikh_transaksi ASC
+        `, [tarikh]);
+        const masuk  = rows.filter(r => r.jenis_aliran === 'MASUK').reduce((a, b) => a + parseFloat(b.amaun), 0);
+        const keluar = rows.filter(r => r.jenis_aliran === 'KELUAR').reduce((a, b) => a + parseFloat(b.amaun), 0);
+        return res.status(200).json({
+            success: true, data: rows,
+            ringkasan: { masuk, keluar, lebihan: masuk - keluar, bil: rows.length },
+        });
+    } catch (error) {
+        console.error('[KEWANGAN] getLaporanHarian:', error.message);
+        return res.status(500).json({ success: false, message: 'Ralat menarik laporan harian.' });
+    }
+};
+
+// ==========================================
+// 12. REKOD TRANSAKSI MANUAL (Masuk atau Keluar)
+//     POST /api/admin/kewangan/rekod
+// ==========================================
+export const rekodTransaksi = async (req, res) => {
+    const no_kp_admin = req.user.no_kp;
+    const { jenis, kategori, amaun, nota, rujukan, no_kp_pihak, penerima_bayaran, tarikh } = req.body;
+
+    if (!['MASUK', 'KELUAR'].includes(jenis)) {
+        return res.status(400).json({ success: false, message: 'Jenis transaksi tidak sah.' });
+    }
+    if (!kategori || !amaun || parseFloat(amaun) <= 0) {
+        return res.status(400).json({ success: false, message: 'Sila isi kategori dan amaun yang sah.' });
+    }
+
+    const kpPihak   = (jenis === 'KELUAR' && kategori === 'KEBAJIKAN') ? (no_kp_pihak || null) : null;
+    const namaPihak = (jenis === 'KELUAR' && kategori !== 'KEBAJIKAN')
+        ? (penerima_bayaran || null)
+        : (jenis === 'MASUK' ? (penerima_bayaran || null) : null);
+
+    try {
+        await db.query(`
+            INSERT INTO transaksi_kewangan
+                (jenis_aliran, kategori, amaun, rujukan, nota, no_kp_pihak, penerima_bayaran, direkod_oleh, tarikh_transaksi)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `, [
+            jenis, kategori, parseFloat(amaun),
+            rujukan || null, nota || null,
+            kpPihak, namaPihak, no_kp_admin,
+            tarikh ? new Date(tarikh) : new Date()
+        ]);
+        return res.status(201).json({
+            success: true,
+            message: `Rekod ${jenis === 'MASUK' ? 'pemasukan' : 'perbelanjaan'} berjaya disimpan.`,
+        });
+    } catch (error) {
+        console.error('[KEWANGAN] rekodTransaksi:', error.message);
+        return res.status(500).json({ success: false, message: 'Ralat menyimpan rekod kewangan.' });
+    }
+};
+
+// ==========================================
 // 4. EKSPORT CSV
 //    GET /api/admin/kewangan/eksport?tahun=2025
 // ==========================================

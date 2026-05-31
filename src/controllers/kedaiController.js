@@ -2,15 +2,63 @@ import db from '../config/db.js';
 import { janaBilFPX, semakTransaksiBil } from '../utils/toyyibpay.js';
 import { prosesKedaiBerjaya } from '../utils/paymentSync.js';
 
+// Migrasi DB — jalankan sekali semasa server mula
+(async () => {
+    try {
+        const [cols] = await db.query(`
+            SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
+            WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'produk_kedai' AND COLUMN_NAME = 'harga_modal'
+        `);
+        if (cols.length === 0) {
+            await db.query(`ALTER TABLE produk_kedai ADD COLUMN harga_modal DECIMAL(10,2) DEFAULT NULL AFTER harga`);
+        }
+        const [colPj] = await db.query(`
+            SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
+            WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'produk_kedai' AND COLUMN_NAME = 'penjual_id'
+        `);
+        if (colPj.length === 0) {
+            await db.query(`ALTER TABLE produk_kedai ADD COLUMN penjual_id INT DEFAULT NULL AFTER harga_modal`);
+        }
+        await db.query(`
+            CREATE TABLE IF NOT EXISTS penjual_kedai (
+                id            INT AUTO_INCREMENT PRIMARY KEY,
+                no_kp         VARCHAR(20)  NOT NULL,
+                nama_perniagaan VARCHAR(200) NOT NULL,
+                jenis_produk  VARCHAR(200),
+                telefon       VARCHAR(20),
+                deskripsi     TEXT,
+                status        ENUM('PENDING','AKTIF','DITOLAK') DEFAULT 'PENDING',
+                nota_admin    TEXT,
+                tarikh_daftar DATETIME DEFAULT CURRENT_TIMESTAMP,
+                tarikh_kemaskini DATETIME DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP
+            )
+        `);
+
+        // Pastikan kolum kategori dalam transaksi_kewangan ada semua nilai yang diperlukan
+        const [[colKat]] = await db.query(`
+            SELECT COLUMN_TYPE FROM INFORMATION_SCHEMA.COLUMNS
+            WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'transaksi_kewangan' AND COLUMN_NAME = 'kategori'
+        `);
+        if (colKat && !colKat.COLUMN_TYPE.includes("'BELIAN_BARANG'")) {
+            await db.query(`
+                ALTER TABLE transaksi_kewangan
+                MODIFY COLUMN kategori ENUM('YURAN','KEDAI','KEBAJIKAN','SUMBANGAN','OPERASI','BELIAN_BARANG','PERKHIDMATAN','ACARA','LAIN-LAIN')
+            `);
+        }
+    } catch (e) {
+        console.error('[KEDAI] Migrasi DB:', e.message);
+    }
+})();
+
 // ============================================================
 // ── ADMIN: PENGURUSAN PRODUK
 // ============================================================
 export const senaraiProduk = async (req, res) => {
     try {
         const [rows] = await db.query(`
-            SELECT id, nama_produk, deskripsi, harga, stok_semasa, gambar, gambar_galeri,
-                   saiz_tersedia, is_percuma, is_preorder, tarikh_tutup_preorder, 
-                   is_variasi, variasi_data, status,
+            SELECT id, nama_produk, deskripsi, harga, harga_modal, penjual_id, stok_semasa,
+                   gambar, gambar_galeri, saiz_tersedia, is_percuma, is_preorder,
+                   tarikh_tutup_preorder, is_variasi, variasi_data, status,
                    DATE_FORMAT(tarikh_cipta, '%d-%m-%Y') AS tarikh_cipta
             FROM produk_kedai
             ORDER BY tarikh_cipta DESC
@@ -24,8 +72,8 @@ export const senaraiProduk = async (req, res) => {
 
 export const tambahProduk = async (req, res) => {
     try {
-        const { nama_produk, deskripsi, harga, stok_semasa, saiz_tersedia,
-                is_percuma, is_preorder, tarikh_tutup_preorder, is_variasi, variasi_data } = req.body;
+        const { nama_produk, deskripsi, harga, harga_modal, stok_semasa, saiz_tersedia,
+                is_percuma, is_preorder, tarikh_tutup_preorder, is_variasi, variasi_data, penjual_id } = req.body;
 
         if (!nama_produk) {
             return res.status(400).json({ success: false, message: 'Nama produk wajib diisi.' });
@@ -45,13 +93,15 @@ export const tambahProduk = async (req, res) => {
 
         const [result] = await db.query(`
             INSERT INTO produk_kedai
-                (nama_produk, deskripsi, harga, stok_semasa, gambar, gambar_galeri,
+                (nama_produk, deskripsi, harga, harga_modal, penjual_id, stok_semasa, gambar, gambar_galeri,
                  saiz_tersedia, is_percuma, is_preorder, tarikh_tutup_preorder, is_variasi, variasi_data)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `, [
             nama_produk,
             deskripsi || null,
             hargaFinal,
+            percuma ? null : (parseFloat(harga_modal) || null),
+            penjual_id ? parseInt(penjual_id) : null,
             parseInt(stok_semasa) || 0,
             gambarUtama,
             galeri.length ? JSON.stringify(galeri) : null,
@@ -73,8 +123,8 @@ export const tambahProduk = async (req, res) => {
 export const kemaskiniProduk = async (req, res) => {
     try {
         const { id } = req.params;
-        const { nama_produk, deskripsi, harga, stok_semasa, status, saiz_tersedia,
-                is_percuma, is_preorder, tarikh_tutup_preorder, is_variasi, variasi_data } = req.body;
+        const { nama_produk, deskripsi, harga, harga_modal, stok_semasa, status, saiz_tersedia,
+                is_percuma, is_preorder, tarikh_tutup_preorder, is_variasi, variasi_data, penjual_id } = req.body;
 
         const fields = [];
         const vals   = [];
@@ -86,6 +136,8 @@ export const kemaskiniProduk = async (req, res) => {
         if (saiz_tersedia !== undefined) { fields.push('saiz_tersedia = ?'); vals.push(saiz_tersedia || null); }
         if (tarikh_tutup_preorder !== undefined) { fields.push('tarikh_tutup_preorder = ?'); vals.push(tarikh_tutup_preorder || null); }
         if (variasi_data !== undefined) { fields.push('variasi_data = ?'); vals.push(variasi_data || null); }
+        if (harga_modal !== undefined) { fields.push('harga_modal = ?'); vals.push(harga_modal ? parseFloat(harga_modal) : null); }
+        if (penjual_id !== undefined) { fields.push('penjual_id = ?'); vals.push(penjual_id ? parseInt(penjual_id) : null); }
 
         if (is_percuma !== undefined) {
             const percuma = (is_percuma === 'true' || is_percuma === '1' || is_percuma === true) ? 1 : 0;
@@ -140,8 +192,8 @@ export const padamProduk = async (req, res) => {
 export const senaraiProdukAktif = async (req, res) => {
     try {
         const [rows] = await db.query(`
-            SELECT id, nama_produk, deskripsi, harga, stok_semasa, gambar, gambar_galeri,
-                   saiz_tersedia, is_percuma, is_preorder, tarikh_tutup_preorder, 
+            SELECT id, nama_produk, deskripsi, harga, harga_modal, stok_semasa, gambar, gambar_galeri,
+                   saiz_tersedia, is_percuma, is_preorder, tarikh_tutup_preorder,
                    is_variasi, variasi_data, status
             FROM produk_kedai
             WHERE status = 'AKTIF'
@@ -367,6 +419,83 @@ export const semakPesanan = async (req, res) => {
         return res.status(200).json({ success: true, data: p });
     } catch (err) {
         return res.status(500).json({ success: false, message: 'Ralat menyemak pesanan.' });
+    }
+};
+
+// ============================================================
+// ── PENJUAL: DAFTAR JUAL (Ahli submit permohonan)
+// ============================================================
+export const daftarPenjual = async (req, res) => {
+    const no_kp = req.user.no_kp;
+    const { nama_perniagaan, jenis_produk, telefon, deskripsi } = req.body;
+    if (!nama_perniagaan) return res.status(400).json({ success: false, message: 'Nama perniagaan wajib diisi.' });
+    try {
+        const [[sedia]] = await db.query('SELECT id, status FROM penjual_kedai WHERE no_kp = ?', [no_kp]);
+        if (sedia) {
+            if (sedia.status === 'AKTIF') return res.status(400).json({ success: false, message: 'Akaun penjual anda sudah aktif.' });
+            if (sedia.status === 'PENDING') return res.status(400).json({ success: false, message: 'Permohonan anda sedang dalam semakan.' });
+            // DITOLAK — boleh daftar semula
+            await db.query(`UPDATE penjual_kedai SET nama_perniagaan=?,jenis_produk=?,telefon=?,deskripsi=?,status='PENDING',nota_admin=NULL WHERE id=?`,
+                [nama_perniagaan, jenis_produk||null, telefon||null, deskripsi||null, sedia.id]);
+            return res.status(200).json({ success: true, message: 'Permohonan semula berjaya dihantar.' });
+        }
+        await db.query(`INSERT INTO penjual_kedai (no_kp, nama_perniagaan, jenis_produk, telefon, deskripsi) VALUES (?,?,?,?,?)`,
+            [no_kp, nama_perniagaan, jenis_produk||null, telefon||null, deskripsi||null]);
+        return res.status(201).json({ success: true, message: 'Permohonan berjaya dihantar. Sila tunggu pengesahan admin.' });
+    } catch (err) {
+        console.error('[PENJUAL] daftarPenjual:', err.message);
+        return res.status(500).json({ success: false, message: 'Ralat mendaftar penjual.' });
+    }
+};
+
+// ── ADMIN: Senarai semua penjual berdaftar ──
+export const senaraiPenjual = async (req, res) => {
+    try {
+        const [rows] = await db.query(`
+            SELECT p.id, p.no_kp, p.nama_perniagaan, p.jenis_produk, p.telefon, p.deskripsi,
+                   p.status, p.nota_admin,
+                   DATE_FORMAT(p.tarikh_daftar, '%d-%m-%Y %H:%i') AS tarikh_daftar,
+                   DATE_FORMAT(p.tarikh_kemaskini, '%d-%m-%Y %H:%i') AS tarikh_kemaskini,
+                   u.nama_pegawai, u.emel,
+                   pen.nama_penempatan AS ptj,
+                   (SELECT COUNT(*) FROM produk_kedai pk WHERE pk.penjual_id = p.id AND pk.status = 'AKTIF') AS bil_produk
+            FROM penjual_kedai p
+            LEFT JOIN users u ON p.no_kp = u.no_kp
+            LEFT JOIN penempatan pen ON u.penempatan_id = pen.id
+            ORDER BY FIELD(p.status,'PENDING','AKTIF','DITOLAK'), p.tarikh_daftar DESC
+        `);
+        return res.status(200).json({ success: true, data: rows });
+    } catch (err) {
+        console.error('[PENJUAL] senaraiPenjual:', err.message);
+        return res.status(500).json({ success: false, message: 'Gagal menarik senarai penjual.' });
+    }
+};
+
+// ── ADMIN: Aktifkan / Tolak penjual ──
+export const kemaskiniStatusPenjual = async (req, res) => {
+    const { id } = req.params;
+    const { status, nota_admin } = req.body;
+    if (!['AKTIF','DITOLAK','PENDING'].includes(status)) {
+        return res.status(400).json({ success: false, message: 'Status tidak sah.' });
+    }
+    try {
+        await db.query('UPDATE penjual_kedai SET status = ?, nota_admin = ? WHERE id = ?', [status, nota_admin || null, id]);
+        return res.status(200).json({ success: true, message: `Status penjual dikemaskini kepada ${status}.` });
+    } catch (err) {
+        return res.status(500).json({ success: false, message: 'Ralat mengemaskini status penjual.' });
+    }
+};
+
+// ── AHLI: Semak status permohonan penjual sendiri ──
+export const semakStatusPenjual = async (req, res) => {
+    try {
+        const [[row]] = await db.query(
+            'SELECT id, status, nota_admin, tarikh_daftar FROM penjual_kedai WHERE no_kp = ?',
+            [req.user.no_kp]
+        );
+        return res.status(200).json({ success: true, data: row || null });
+    } catch (err) {
+        return res.status(500).json({ success: false, message: 'Ralat menyemak status.' });
     }
 };
 

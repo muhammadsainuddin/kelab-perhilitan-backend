@@ -164,6 +164,10 @@ export const changePassword = async (req, res) => {
         const isMatch = await bcrypt.compare(oldPassword, user[0].password);
         if (!isMatch) return res.status(400).json({ success: false, message: "Kata laluan lama salah." });
 
+        if (!newPassword || newPassword.length < 8) {
+            return res.status(400).json({ success: false, message: "Kata laluan baru mestilah sekurang-kurangnya 8 aksara." });
+        }
+
         const hashed = await bcrypt.hash(newPassword, 10);
         await db.query(`UPDATE users SET password = ? WHERE no_kp = ?`, [hashed, no_kp]);
 

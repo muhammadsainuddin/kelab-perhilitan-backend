@@ -5,6 +5,7 @@ import expressK from 'express';
 import {
     getStatistikKewangan, getSenaraiTransaksi, rekodKeluar, eksportCSV,
     getPenyataTahunan, getSenaraiSumbangan, rekodSumbangan, importSumbanganBulk,
+    getProdukLaris, getLaporanBulanan, getLaporanHarian, rekodTransaksi,
 } from '../controllers/kewanganController.js';
 import { verifyToken as vT, requireRole as rR } from '../middleware/authMiddleware.js';
 
@@ -24,5 +25,11 @@ routerK.get('/penyata-tahunan',   getPenyataTahunan);
 routerK.get('/sumbangan',         getSenaraiSumbangan);
 routerK.post('/sumbangan',        rekodSumbangan);
 routerK.post('/sumbangan/import', importSumbanganBulk);
+
+// Rekod tunggal (masuk/keluar), laporan berkala, produk laris
+routerK.post('/rekod',            rekodTransaksi);
+routerK.get('/produk-laris',      getProdukLaris);
+routerK.get('/laporan-bulanan',   getLaporanBulanan);
+routerK.get('/laporan-harian',    getLaporanHarian);
 
 export default routerK;

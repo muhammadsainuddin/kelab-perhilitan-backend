@@ -17,10 +17,11 @@ export const verifyToken = (req, res, next) => {
 
     try {
         const decoded = jwt.verify(token, process.env.JWT_SECRET);
-        req.user = decoded; // Simpan data user (id, role) dalam request
-        next(); // Teruskan ke route seterusnya
+        req.user = decoded;
+        next();
     } catch (error) {
-        return res.status(403).json({ message: "Token tidak sah atau telah luput." });
+        // Token luput atau tidak sah → 401 (bukan 403) supaya frontend boleh auto-logout
+        return res.status(401).json({ message: "Sesi tamat. Sila log masuk semula." });
     }
 };
 

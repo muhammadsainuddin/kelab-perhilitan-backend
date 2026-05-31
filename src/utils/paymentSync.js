@@ -35,6 +35,16 @@ export const prosesYuranBerjaya = async (billcode) => {
     } catch (e) {
         console.error('[YURAN] Gagal rekod transaksi kewangan:', e.message);
     }
+
+    // Rekod caj ToyyibPay RM1.00 secara automatik sebagai perbelanjaan operasi FPX
+    try {
+        await db.query(`
+            INSERT INTO transaksi_kewangan (jenis_aliran, kategori, amaun, rujukan, nota)
+            VALUES ('KELUAR', 'OPERASI', 1.00, ?, ?)
+        `, [billcode, `Caj ToyyibPay FPX — Yuran ${no_kp}`]);
+    } catch (e) {
+        console.error('[YURAN] Gagal rekod caj ToyyibPay:', e.message);
+    }
 };
 
 // ── Proses PESANAN KEDAI berjaya: tolak stok + rekod buku tunai (transaksi atomik) ──
@@ -80,6 +90,16 @@ export const prosesKedaiBerjaya = async (pesananId) => {
                 VALUES ('MASUK','KEDAI',?,?,?,?)
             `, [pesanan.jumlah_keseluruhan, pesanan.billCode, `Jualan Kedai — Pesanan #${pesananId}`, pesanan.no_kp]);
         } catch (e) {}
+
+        // Rekod caj ToyyibPay RM1.00 secara automatik sebagai perbelanjaan operasi FPX
+        try {
+            await conn.query(`
+                INSERT INTO transaksi_kewangan (jenis_aliran, kategori, amaun, rujukan, nota)
+                VALUES ('KELUAR', 'OPERASI', 1.00, ?, ?)
+            `, [pesanan.billCode || `KEDAI-${pesananId}`, `Caj ToyyibPay FPX — Pesanan Kedai #${pesananId}`]);
+        } catch (e) {
+            console.error('[KEDAI] Gagal rekod caj ToyyibPay:', e.message);
+        }
 
         await conn.commit();
     } catch (e) {

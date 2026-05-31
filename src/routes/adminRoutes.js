@@ -10,6 +10,7 @@ import {
     getBelumDaftar,
     daftarAhliManual,
     janaNoAhliBiroPukal,
+    janaSemulaNoBiroPukal,
     senaraiSemuaStaff,
     tambahStaffBulk,
     getProfilSaya,
@@ -45,6 +46,7 @@ router.put('/kemaskini-ahli/:no_kp', kemaskiniAhli);
 router.put('/kemaskini-profil-ahli/:no_kp', kemaskiniProfilAhli);
 router.post('/daftar-ahli', daftarAhliManual);
 router.post('/jana-no-ahli-biro', janaNoAhliBiroPukal);
+router.post('/jana-semula-no-ahli-biro', janaSemulaNoBiroPukal);
 
 // ------------------------------------------
 // PENGURUSAN INDUK PENGGUNA (IMPORT CSV)
