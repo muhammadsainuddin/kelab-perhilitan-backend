@@ -9,7 +9,9 @@ import {
     senaraiSemuaAcara,
     kemaskiniAcara,
     senaraiPesertaAcara,
-    padamAcara
+    padamAcara,
+    analisisAcara,
+    kemaskiniJersi
 } from '../controllers/acaraController.js';
 import { verifyToken, requireRole } from '../middleware/authMiddleware.js';
 import { upload } from '../middleware/uploadMiddleware.js';
@@ -36,5 +38,7 @@ router.get('/admin/semua',           adminOnly, senaraiSemuaAcara);
 router.put('/admin/kemaskini/:id',   adminOnly, upload.array('poster', 5), kemaskiniAcara);
 router.get('/admin/peserta/:id',     adminOnly, senaraiPesertaAcara);
 router.delete('/admin/padam/:id',    adminOnly, padamAcara);
+router.get('/admin/analisis/:id',    adminOnly, analisisAcara);
+router.put('/admin/jersi',           adminOnly, kemaskiniJersi);
 
 export default router;
