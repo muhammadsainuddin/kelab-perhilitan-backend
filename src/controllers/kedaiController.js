@@ -45,6 +45,16 @@ import { prosesKedaiBerjaya } from '../utils/paymentSync.js';
                 MODIFY COLUMN kategori ENUM('YURAN','KEDAI','KEBAJIKAN','SUMBANGAN','OPERASI','BELIAN_BARANG','PERKHIDMATAN','ACARA','LAIN-LAIN')
             `);
         }
+
+        // Kolum penghantaran untuk pesanan_kedai
+        const migrasiFail = [
+            `ALTER TABLE pesanan_kedai ADD COLUMN IF NOT EXISTS kaedah_penghantaran ENUM('PTJ','POS') DEFAULT 'PTJ'`,
+            `ALTER TABLE pesanan_kedai ADD COLUMN IF NOT EXISTS alamat_penghantaran TEXT DEFAULT NULL`,
+            `ALTER TABLE pesanan_kedai ADD COLUMN IF NOT EXISTS kos_postage DECIMAL(10,2) DEFAULT 0.00`,
+        ];
+        for (const sql of migrasiFail) {
+            try { await db.query(sql); } catch(e) {}
+        }
     } catch (e) {
         console.error('[KEDAI] Migrasi DB:', e.message);
     }
@@ -192,7 +202,7 @@ export const padamProduk = async (req, res) => {
 export const senaraiProdukAktif = async (req, res) => {
     try {
         const [rows] = await db.query(`
-            SELECT id, nama_produk, deskripsi, harga, harga_modal, stok_semasa, gambar, gambar_galeri,
+            SELECT id, nama_produk, deskripsi, harga, harga_modal, penjual_id, stok_semasa, gambar, gambar_galeri,
                    saiz_tersedia, is_percuma, is_preorder, tarikh_tutup_preorder,
                    is_variasi, variasi_data, status
             FROM produk_kedai
@@ -215,6 +225,7 @@ export const senaraiPesanan = async (req, res) => {
             SELECT p.id, p.no_kp, u.nama_pegawai AS nama_ahli,
                    u.phone AS no_tel, pen.nama_penempatan AS ptj,
                    p.billCode, p.jumlah_keseluruhan, p.is_percuma, p.status_pesanan, p.nota_admin,
+                   p.kaedah_penghantaran, p.alamat_penghantaran, p.kos_postage,
                    DATE_FORMAT(p.tarikh_pesanan, '%d-%m-%Y %H:%i') AS tarikh_pesanan
             FROM pesanan_kedai p
             LEFT JOIN users u
@@ -261,7 +272,7 @@ export const kemaskiniStatusPesanan = async (req, res) => {
 // ============================================================
 export const buatPesanan = async (req, res) => {
     const no_kp = req.user.no_kp;
-    const { items } = req.body;
+    const { items, kaedah_penghantaran, alamat_penghantaran, kos_postage } = req.body;
 
     if (!items || !Array.isArray(items) || items.length === 0) {
         return res.status(400).json({ success: false, message: 'Sila pilih produk.' });
@@ -312,7 +323,15 @@ export const buatPesanan = async (req, res) => {
             diproses.push({ ...prod, kuantiti: item.kuantiti, saiz: item.saiz || null, hargaFinal: hargaSeunit });
         }
 
-        const [pRes] = await conn.query('INSERT INTO pesanan_kedai (no_kp, jumlah_keseluruhan, is_percuma) VALUES (?, ?, ?)', [no_kp, jumlah, adaPercuma ? 1 : 0]);
+        const kos_pos = adaPercuma ? 0 : (parseFloat(kos_postage) || 0);
+        const jumlahTotal = jumlah + kos_pos;
+        const kaedah = kaedah_penghantaran === 'POS' ? 'POS' : 'PTJ';
+        const alamat  = (kaedah === 'POS' && alamat_penghantaran) ? alamat_penghantaran.trim() : null;
+
+        const [pRes] = await conn.query(
+            'INSERT INTO pesanan_kedai (no_kp, jumlah_keseluruhan, is_percuma, kaedah_penghantaran, alamat_penghantaran, kos_postage) VALUES (?, ?, ?, ?, ?, ?)',
+            [no_kp, jumlahTotal, adaPercuma ? 1 : 0, kaedah, alamat, kos_pos]
+        );
         const pesananId = pRes.insertId;
 
         for (const it of diproses) {
@@ -349,7 +368,7 @@ export const buatPesanan = async (req, res) => {
 
         const fpxData = await janaBilFPX({
             keterangan: `Pesanan Kedai #${pesananId} - Kelab Perhilitan`,
-            amaun: jumlah,
+            amaun: jumlahTotal,
             returnUrl: `${frontendUrl}/dashboard/kedai`,
             callbackUrl: `${backendUrl}/api/kedai/webhook/${pesananId}`,
             referenceNo: `KEDAI-${pesananId}`,
@@ -507,6 +526,7 @@ export const senaraiPesananAhli = async (req, res) => {
         const no_kp = req.user.no_kp;
         const [pesanan] = await db.query(`
             SELECT p.id, p.billCode, p.jumlah_keseluruhan, p.is_percuma, p.status_pesanan, p.nota_admin,
+                   p.kaedah_penghantaran, p.alamat_penghantaran, p.kos_postage,
                    DATE_FORMAT(p.tarikh_pesanan, '%d-%m-%Y %H:%i') AS tarikh_pesanan
             FROM pesanan_kedai p
             WHERE p.no_kp = ?
