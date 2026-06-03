@@ -27,10 +27,11 @@ export const getMyProfile = async (req, res) => {
                 u.no_phone_waris AS no_tel_waris, 
                 u.akaun_bank_waris AS no_acc_waris,
                 u.nama_bank_waris AS bank_waris,
-                u.status_ahli, 
+                u.status_ahli,
                 u.no_ahli,
-                u.gambar, 
-                u.role
+                u.gambar,
+                u.role,
+                u.jawatan_kelab
             FROM users u
             LEFT JOIN penempatan p ON u.penempatan_id = p.id
             WHERE u.no_kp = ?

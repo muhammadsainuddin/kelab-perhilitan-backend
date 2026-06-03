@@ -5,9 +5,10 @@ import { KELAB, footerEmelHTML } from '../config/kelab.js';
 
 dotenv.config();
 
-const TOYYIBPAY_URL = process.env.TOYYIBPAY_URL || 'https://dev.toyyibpay.com/index.php/api/createBill';
-const SECRET_KEY    = process.env.SECRET_KEY    || 'g0jw4dtf-1mgf-l4au-les2-se8kpdg9beoe';
-const CATEGORY_CODE = process.env.CATEGORY_CODE || 'v4vftvzw';
+const TOYYIBPAY_URL         = process.env.TOYYIBPAY_URL         || 'https://dev.toyyibpay.com/index.php/api/createBill';
+const SECRET_KEY            = process.env.SECRET_KEY            || '';
+const CATEGORY_CODE_YURAN   = process.env.CATEGORY_CODE_YURAN   || '';
+const CATEGORY_CODE_KEDAI   = process.env.CATEGORY_CODE_KEDAI   || '';
 
 /**
  * Fungsi Modular untuk Menjana Bil FPX ToyyibPay
@@ -22,7 +23,8 @@ export const janaBilFPX = async ({
     jenis = 'YURAN' // 'YURAN' atau 'KEDAI'
 }) => {
     const amountInCents = Math.round(parseFloat(amaun) * 100);
-    const billName = jenis === 'YURAN' ? 'Yuran Kelab PERHILITAN' : 'Kedai Kelab PERHILITAN';
+    const billName      = jenis === 'YURAN' ? 'Yuran Kelab PERHILITAN' : 'Kedai Kelab PERHILITAN';
+    const categoryCode  = jenis === 'YURAN' ? CATEGORY_CODE_YURAN : CATEGORY_CODE_KEDAI;
 
     // ── Resit E-mel Tersuai (Hanya untuk Yuran) ──
     let contentEmail = "";
@@ -52,7 +54,7 @@ export const janaBilFPX = async ({
     // ── Sediakan Data ToyyibPay ──
     const formData = new URLSearchParams({
         userSecretKey: SECRET_KEY,
-        categoryCode:  CATEGORY_CODE,
+        categoryCode:  categoryCode,
         billName:      billName,
         billDescription: keterangan,
         billPriceSetting: 1,

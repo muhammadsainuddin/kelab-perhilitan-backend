@@ -108,6 +108,14 @@ export const kemaskiniStatusKebajikan = async (req, res) => {
         return res.status(400).json({ success: false, message: 'Amaun lulus wajib diisi.' });
     }
 
+    // Hanya Yang Dipertua boleh meluluskan permohonan
+    if (status_permohonan === 'LULUS') {
+        const [[admin]] = await db.query('SELECT jawatan_kelab FROM users WHERE no_kp = ?', [admin_no_kp]);
+        if (!admin || admin.jawatan_kelab !== 'Yang Dipertua') {
+            return res.status(403).json({ success: false, message: 'Hanya Yang Dipertua Kelab sahaja yang boleh meluluskan permohonan bantuan kebajikan.' });
+        }
+    }
+
     const conn = await db.getConnection();
     try {
         await conn.beginTransaction();
@@ -582,10 +590,10 @@ export const getProfilSaya = async (req, res) => {
     try {
         const query = `
             SELECT 
-                u.nama_pegawai AS nama_penuh, u.no_kp, 
+                u.nama_pegawai AS nama_penuh, u.no_kp,
                 p.nama_penempatan AS nama_majikan, u.gred_penyandang_sspa AS gred_sspa,
-                u.emel AS email, u.phone AS no_tel, u.saiz_baju, u.gambar, 
-                u.status_ahli, u.role
+                u.emel AS email, u.phone AS no_tel, u.saiz_baju, u.gambar,
+                u.status_ahli, u.role, u.jawatan_kelab
             FROM users u
             LEFT JOIN penempatan p ON u.penempatan_id = p.id
             WHERE u.no_kp = ?

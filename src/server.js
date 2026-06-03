@@ -18,6 +18,7 @@ import bantuanRoutes from './routes/bantuanRoutes.js';
 import acaraRoutes from './routes/acaraRoutes.js';
 import kedaiRoutes from './routes/kedaiRoutes.js';
 import kewanganRoutes from './routes/kewanganRoutes.js';
+import settingsRoutes from './routes/settingsRoutes.js';
 
 
 import eventBus from './utils/eventEmitter.js';
@@ -46,6 +47,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
+app.set('trust proxy', 1);
 
 // Security headers. crossOriginResourcePolicy dilonggar supaya fail upload (gambar/PDF)
 // dalam /public boleh dimuat dari domain frontend yang berlainan.
@@ -102,6 +104,7 @@ app.use('/api/bantuan', bantuanRoutes);
 app.use('/api/acara', acaraRoutes);
 app.use('/api/kedai', kedaiRoutes);
 app.use('/api/admin/kewangan', kewanganRoutes);
+app.use('/api/settings', settingsRoutes);
 
 app.use(errorLogger);
 

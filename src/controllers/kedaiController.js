@@ -51,10 +51,20 @@ import { prosesKedaiBerjaya } from '../utils/paymentSync.js';
             `ALTER TABLE pesanan_kedai ADD COLUMN IF NOT EXISTS kaedah_penghantaran ENUM('PTJ','POS') DEFAULT 'PTJ'`,
             `ALTER TABLE pesanan_kedai ADD COLUMN IF NOT EXISTS alamat_penghantaran TEXT DEFAULT NULL`,
             `ALTER TABLE pesanan_kedai ADD COLUMN IF NOT EXISTS kos_postage DECIMAL(10,2) DEFAULT 0.00`,
+            // Kolum untuk produk milik penjual
+            `ALTER TABLE produk_kedai ADD COLUMN IF NOT EXISTS nota_tolak TEXT DEFAULT NULL`,
         ];
         for (const sql of migrasiFail) {
             try { await db.query(sql); } catch(e) {}
         }
+
+        // Pastikan status produk_kedai ada nilai SEMAK dan DITOLAK
+        try {
+            await db.query(`
+                ALTER TABLE produk_kedai
+                MODIFY COLUMN status ENUM('AKTIF','HABIS','SEMAK','DITOLAK') DEFAULT 'AKTIF'
+            `);
+        } catch(e) {}
     } catch (e) {
         console.error('[KEDAI] Migrasi DB:', e.message);
     }
@@ -515,6 +525,207 @@ export const semakStatusPenjual = async (req, res) => {
         return res.status(200).json({ success: true, data: row || null });
     } catch (err) {
         return res.status(500).json({ success: false, message: 'Ralat menyemak status.' });
+    }
+};
+
+// ============================================================
+// ── PENJUAL: URUS PRODUK SENDIRI
+// ============================================================
+
+// Penjual lihat produk mereka sendiri
+export const senaraiProdukPenjual = async (req, res) => {
+    try {
+        const [[penjual]] = await db.query('SELECT id FROM penjual_kedai WHERE no_kp = ? AND status = "AKTIF"', [req.user.no_kp]);
+        if (!penjual) return res.status(403).json({ success: false, message: 'Akaun penjual tidak aktif.' });
+
+        const [rows] = await db.query(`
+            SELECT id, nama_produk, deskripsi, harga, stok_semasa, gambar,
+                   saiz_tersedia, status, nota_tolak,
+                   DATE_FORMAT(tarikh_cipta, '%d-%m-%Y') AS tarikh_cipta
+            FROM produk_kedai
+            WHERE penjual_id = ?
+            ORDER BY tarikh_cipta DESC
+        `, [penjual.id]);
+        return res.status(200).json({ success: true, data: rows });
+    } catch (err) {
+        return res.status(500).json({ success: false, message: 'Gagal menarik produk.' });
+    }
+};
+
+// Penjual tambah produk baru (status terus SEMAK — tunggu admin luluskan)
+export const tambahProdukPenjual = async (req, res) => {
+    try {
+        const [[penjual]] = await db.query('SELECT id FROM penjual_kedai WHERE no_kp = ? AND status = "AKTIF"', [req.user.no_kp]);
+        if (!penjual) return res.status(403).json({ success: false, message: 'Akaun penjual tidak aktif.' });
+
+        const { nama_produk, deskripsi, harga, stok_semasa, saiz_tersedia } = req.body;
+        if (!nama_produk) return res.status(400).json({ success: false, message: 'Nama produk wajib diisi.' });
+        if (!harga || parseFloat(harga) <= 0) return res.status(400).json({ success: false, message: 'Harga produk wajib diisi.' });
+
+        let gambarUtama = null;
+        if (req.files && req.files.length > 0) {
+            gambarUtama = `/uploads/images/${req.files[0].filename}`;
+        }
+
+        await db.query(`
+            INSERT INTO produk_kedai (nama_produk, deskripsi, harga, stok_semasa, gambar, saiz_tersedia, penjual_id, status)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 'SEMAK')
+        `, [nama_produk, deskripsi || null, parseFloat(harga), parseInt(stok_semasa) || 0, gambarUtama, saiz_tersedia || null, penjual.id]);
+
+        return res.status(201).json({ success: true, message: 'Produk dihantar untuk semakan admin.' });
+    } catch (err) {
+        console.error('[PENJUAL] tambahProduk:', err.message);
+        return res.status(500).json({ success: false, message: 'Gagal menambah produk.' });
+    }
+};
+
+// Penjual kemaskini produk milik mereka (hanya SEMAK atau DITOLAK — boleh edit semula)
+export const kemaskiniProdukPenjual = async (req, res) => {
+    try {
+        const [[penjual]] = await db.query('SELECT id FROM penjual_kedai WHERE no_kp = ? AND status = "AKTIF"', [req.user.no_kp]);
+        if (!penjual) return res.status(403).json({ success: false, message: 'Akaun penjual tidak aktif.' });
+
+        const { id } = req.params;
+        const [[produk]] = await db.query('SELECT id, status FROM produk_kedai WHERE id = ? AND penjual_id = ?', [id, penjual.id]);
+        if (!produk) return res.status(404).json({ success: false, message: 'Produk tidak dijumpai.' });
+
+        const { nama_produk, deskripsi, harga, stok_semasa, saiz_tersedia } = req.body;
+        const fields = [];
+        const vals = [];
+
+        if (nama_produk !== undefined) { fields.push('nama_produk = ?'); vals.push(nama_produk); }
+        if (deskripsi !== undefined)   { fields.push('deskripsi = ?');   vals.push(deskripsi); }
+        if (harga !== undefined)       { fields.push('harga = ?');       vals.push(parseFloat(harga)); }
+        if (stok_semasa !== undefined) { fields.push('stok_semasa = ?'); vals.push(parseInt(stok_semasa)); }
+        if (saiz_tersedia !== undefined){ fields.push('saiz_tersedia = ?'); vals.push(saiz_tersedia || null); }
+
+        if (req.files && req.files.length > 0) {
+            fields.push('gambar = ?');
+            vals.push(`/uploads/images/${req.files[0].filename}`);
+        }
+
+        // Hantar semula untuk semakan jika sebelum ini AKTIF atau DITOLAK
+        if (['AKTIF', 'DITOLAK'].includes(produk.status)) {
+            fields.push('status = ?', 'nota_tolak = ?');
+            vals.push('SEMAK', null);
+        }
+
+        if (fields.length === 0) return res.status(400).json({ success: false, message: 'Tiada data untuk dikemaskini.' });
+
+        vals.push(id);
+        await db.query(`UPDATE produk_kedai SET ${fields.join(', ')} WHERE id = ?`, vals);
+        return res.status(200).json({ success: true, message: 'Produk dikemaskini dan dihantar semula untuk semakan.' });
+    } catch (err) {
+        return res.status(500).json({ success: false, message: 'Gagal mengemaskini produk.' });
+    }
+};
+
+// Penjual padam produk milik mereka
+export const padamProdukPenjual = async (req, res) => {
+    try {
+        const [[penjual]] = await db.query('SELECT id FROM penjual_kedai WHERE no_kp = ? AND status = "AKTIF"', [req.user.no_kp]);
+        if (!penjual) return res.status(403).json({ success: false, message: 'Akaun penjual tidak aktif.' });
+
+        const [[produk]] = await db.query('SELECT id FROM produk_kedai WHERE id = ? AND penjual_id = ?', [req.params.id, penjual.id]);
+        if (!produk) return res.status(404).json({ success: false, message: 'Produk tidak dijumpai.' });
+
+        await db.query('DELETE FROM produk_kedai WHERE id = ?', [req.params.id]);
+        return res.status(200).json({ success: true, message: 'Produk berjaya dipadam.' });
+    } catch (err) {
+        return res.status(500).json({ success: false, message: 'Gagal memadam produk.' });
+    }
+};
+
+// Penjual lihat jualan produk mereka + ringkasan pendapatan
+export const jualanPenjual = async (req, res) => {
+    try {
+        const [[penjual]] = await db.query('SELECT id FROM penjual_kedai WHERE no_kp = ? AND status = "AKTIF"', [req.user.no_kp]);
+        if (!penjual) return res.status(403).json({ success: false, message: 'Akaun penjual tidak aktif.' });
+
+        // Cari semua pesanan yang ada item dari produk penjual ini
+        const [pesanan] = await db.query(`
+            SELECT DISTINCT
+                p.id, p.status_pesanan, p.jumlah_keseluruhan, p.is_percuma,
+                p.kaedah_penghantaran, p.kos_postage,
+                DATE_FORMAT(p.tarikh_pesanan, '%d-%m-%Y %H:%i') AS tarikh_pesanan,
+                u.nama_pegawai AS nama_pembeli
+            FROM pesanan_kedai p
+            JOIN item_pesanan i ON i.pesanan_id = p.id
+            JOIN produk_kedai pr ON pr.id = i.produk_id
+            JOIN users u ON u.no_kp = p.no_kp
+            WHERE pr.penjual_id = ?
+              AND p.status_pesanan IN ('DIBAYAR','DIPROSES','SELESAI')
+            ORDER BY p.tarikh_pesanan DESC
+        `, [penjual.id]);
+
+        for (const p of pesanan) {
+            const [items] = await db.query(`
+                SELECT i.kuantiti, i.saiz, i.harga_seunit, pr.nama_produk
+                FROM item_pesanan i
+                JOIN produk_kedai pr ON pr.id = i.produk_id
+                WHERE i.pesanan_id = ? AND pr.penjual_id = ?
+            `, [p.id, penjual.id]);
+            p.items = items;
+            // Hasil untuk pesanan ini: jumlah (harga × kuantiti) - komisyen RM1/item - FPX RM1/pesanan
+            const hasil = items.reduce((s, it) => s + (parseFloat(it.harga_seunit) * it.kuantiti), 0);
+            const bilanganItem = items.reduce((s, it) => s + it.kuantiti, 0);
+            p.hasil_kasar = hasil;
+            p.komisyen_kelab = bilanganItem * 1; // RM1 per item
+            p.caj_fpx = 1; // RM1 per transaksi
+            p.anggaran_bersih = hasil - p.komisyen_kelab - p.caj_fpx;
+        }
+
+        // Ringkasan keseluruhan
+        const hasil_kasar_total = pesanan.reduce((s, p) => s + p.hasil_kasar, 0);
+        const komisyen_total = pesanan.reduce((s, p) => s + p.komisyen_kelab, 0);
+        const fpx_total = pesanan.reduce((s, p) => s + p.caj_fpx, 0);
+        const bersih_total = hasil_kasar_total - komisyen_total - fpx_total;
+
+        return res.status(200).json({
+            success: true,
+            data: pesanan,
+            ringkasan: { hasil_kasar: hasil_kasar_total, komisyen_kelab: komisyen_total, caj_fpx: fpx_total, bersih: bersih_total }
+        });
+    } catch (err) {
+        console.error('[PENJUAL] jualanPenjual:', err.message);
+        return res.status(500).json({ success: false, message: 'Gagal menarik data jualan.' });
+    }
+};
+
+// ── ADMIN: Senarai produk penjual dalam semakan ──
+export const senaraiProdukSemak = async (req, res) => {
+    try {
+        const [rows] = await db.query(`
+            SELECT pk.id, pk.nama_produk, pk.deskripsi, pk.harga, pk.stok_semasa,
+                   pk.gambar, pk.saiz_tersedia, pk.status, pk.nota_tolak,
+                   pj.nama_perniagaan, pj.no_kp AS penjual_no_kp,
+                   u.nama_pegawai AS nama_penjual, u.emel,
+                   DATE_FORMAT(pk.tarikh_cipta, '%d-%m-%Y %H:%i') AS tarikh_hantar
+            FROM produk_kedai pk
+            JOIN penjual_kedai pj ON pj.id = pk.penjual_id
+            JOIN users u ON u.no_kp = pj.no_kp
+            WHERE pk.status IN ('SEMAK','DITOLAK')
+            ORDER BY FIELD(pk.status,'SEMAK','DITOLAK'), pk.tarikh_cipta ASC
+        `);
+        return res.status(200).json({ success: true, data: rows });
+    } catch (err) {
+        return res.status(500).json({ success: false, message: 'Gagal menarik senarai semakan produk.' });
+    }
+};
+
+// ── ADMIN: Luluskan atau tolak produk penjual ──
+export const semakProdukPenjual = async (req, res) => {
+    const { id } = req.params;
+    const { status, nota_tolak } = req.body;
+    if (!['AKTIF', 'DITOLAK'].includes(status)) {
+        return res.status(400).json({ success: false, message: 'Status mesti AKTIF atau DITOLAK.' });
+    }
+    try {
+        await db.query('UPDATE produk_kedai SET status = ?, nota_tolak = ? WHERE id = ?',
+            [status, nota_tolak || null, id]);
+        return res.status(200).json({ success: true, message: `Produk ${status === 'AKTIF' ? 'diluluskan' : 'ditolak'}.` });
+    } catch (err) {
+        return res.status(500).json({ success: false, message: 'Gagal mengemaskini status produk.' });
     }
 };
 
