@@ -65,14 +65,23 @@ app.use((req, res, next) => {
 const allowedOrigins = [
     process.env.FRONTEND_URL,
     process.env.STAGING_URL,
+    // Web dev
     'http://localhost:5173',
     'http://127.0.0.1:5173',
     'http://localhost:4173',
+    // Capacitor Android (androidScheme: https → https://localhost)
+    'capacitor://localhost',
+    'https://localhost',
+    'http://localhost',
 ].filter(Boolean);
 
-// 2. FIX: Permudahkan tetapan CORS dengan memasukkan array terus
 app.use(cors({
-    origin: allowedOrigins,
+    origin: (origin, callback) => {
+        // Benarkan request tanpa origin (Android WebView, Postman, server-to-server)
+        if (!origin) return callback(null, true);
+        if (allowedOrigins.includes(origin)) return callback(null, true);
+        callback(new Error(`CORS: origin '${origin}' tidak dibenarkan.`));
+    },
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],
