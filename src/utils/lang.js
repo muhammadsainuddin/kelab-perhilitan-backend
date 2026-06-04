@@ -12,12 +12,11 @@ export const messages = {
         resetSuccess: "Kata laluan berjaya ditukar. Anda boleh log masuk sekarang.",
         
         // Kandungan E-mel
-        emailSubject: "GeoRanger TNPP - Reset Kata Laluan",
-        emailTitle: "Reset Kata Laluan GeoRanger TNPP",
-        emailBody1: "Anda menerima e-mel ini kerana anda (atau seseorang) memohon untuk menukar kata laluan.",
-        emailBody2: "Sila klik pautan di bawah untuk menetapkan semula kata laluan anda. Pautan ini sah selama 10 minit.",
-        emailBtn: "Reset Kata Laluan Saya",
-        emailIgnore: "Jika anda tidak memohon, sila abaikan e-mel ini."
+        emailSubject: "Kelab PERHILITAN — Tetapan Semula Kata Laluan",
+        emailBody1: "Anda menerima e-mel ini kerana permohonan untuk menetapkan semula kata laluan akaun anda telah dibuat.",
+        emailBody2: "Klik butang di bawah untuk mencipta kata laluan baru. Pautan ini hanya sah selama <strong>10 minit</strong> dan boleh digunakan sekali sahaja.",
+        emailBtn: "Tetapkan Semula Kata Laluan",
+        emailIgnore: "Jika anda tidak membuat permohonan ini, sila abaikan e-mel ini. Kata laluan anda tidak akan berubah."
     },
     en: {
         emailExists: "This email is already registered.",
@@ -32,12 +31,11 @@ export const messages = {
         resetSuccess: "Password reset successful. You can now log in.",
         
         // Email Content
-        emailSubject: "GeoRanger TNPP - Password Reset",
-        emailTitle: "GeoRanger TNPP Password Reset",
-        emailBody1: "You are receiving this email because you (or someone else) requested a password reset.",
-        emailBody2: "Please click the link below to reset your password. This link is valid for 10 minutes.",
+        emailSubject: "Kelab PERHILITAN — Password Reset Request",
+        emailBody1: "You are receiving this email because a password reset was requested for your account.",
+        emailBody2: "Click the button below to create a new password. This link is valid for <strong>10 minutes</strong> and can only be used once.",
         emailBtn: "Reset My Password",
-        emailIgnore: "If you did not request this, please ignore this email."
+        emailIgnore: "If you did not request this, please ignore this email. Your password will remain unchanged."
     }
 };
 

@@ -4,6 +4,7 @@ import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
 import sendEmail from '../utils/sendEmail.js';
 import { messages, getLang } from '../utils/lang.js';
+import { KELAB, footerEmelHTML } from '../config/kelab.js';
 
 // ==========================================
 // 1. Pendaftaran / Pengaktifan Akaun
@@ -90,9 +91,16 @@ export const login = async (req, res) => {
 
         const token = jwt.sign({ id: user.id, role: user.role, no_kp: user.no_kp }, process.env.JWT_SECRET, { expiresIn: '1d' });
 
+        // Jana refresh token (tahan 1 tahun) untuk biometrik
+        const refreshToken = crypto.randomBytes(64).toString('hex');
+        const hashedRefreshToken = crypto.createHash('sha256').update(refreshToken).digest('hex');
+        const refreshExpiry = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000);
+        await db.query('UPDATE users SET refresh_token = ?, refresh_token_expiry = ? WHERE id = ?', [hashedRefreshToken, refreshExpiry, user.id]);
+
         res.status(200).json({
             message: "Berjaya log masuk.",
             token,
+            refreshToken,
             user: { id: user.id, no_kp: user.no_kp, name: user.nama_pegawai, role: user.role, penempatan: user.nama_penempatan }
         });
     } catch (error) {
@@ -115,37 +123,74 @@ export const forgotPassword = async (req, res) => {
     const { email } = req.body;
 
     try {
-        // Carian terus menggunakan jadual users
-        const query = `SELECT id, emel AS email FROM users WHERE emel = ?`;
+        // Ambil id, emel dan nama untuk sapaan peribadi
+        const query = `SELECT id, emel AS email, nama_pegawai FROM users WHERE emel = ?`;
         const [users] = await db.query(query, [email]);
         const user = users[0];
 
-        // Elak user enumeration: jangan dedahkan sama ada e-mel wujud.
-        // Balas mesej generik yang sama; hanya hantar e-mel jika user benar-benar wujud.
+        // Elak user enumeration — balas mesej generik walaupun e-mel tidak wujud
         if (!user) {
             return res.status(200).json({ message: msg.resetEmailSent });
         }
 
         const resetToken = crypto.randomBytes(32).toString('hex');
         const hashedResetToken = crypto.createHash('sha256').update(resetToken).digest('hex');
-        const expiryTime = new Date(Date.now() + 10 * 60 * 1000); 
+        const expiryTime = new Date(Date.now() + 10 * 60 * 1000);
 
         await db.query('UPDATE users SET reset_token = ?, reset_token_expiry = ? WHERE id = ?', [hashedResetToken, expiryTime, user.id]);
 
-        const resetUrl = `${process.env.FRONTEND_URL}/reset-password/${resetToken}`;
-        
+        // Hash history — URL mesti ada /#/ supaya Vue Router boleh kendalikan
+        const resetUrl = `${process.env.FRONTEND_URL}/#/reset-password/${resetToken}`;
+        const namaPengguna = user.nama_pegawai || 'Ahli Kelab';
+
         const emailTemplate = `
-        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; border: 1px solid #e5e7eb; border-radius: 8px; overflow: hidden;">
-            <div style="background-color: #0F4C3A; padding: 20px; text-align: center; color: white;">
-                <h2 style="margin: 0;">Reset Kata Laluan</h2>
-            </div>
-            <div style="padding: 20px; color: #333; line-height: 1.6;">
-                <p>Klik pautan di bawah untuk reset kata laluan anda. Pautan ini sah selama 10 minit.</p>
-                <div style="text-align: center; margin: 20px 0;">
-                    <a href="${resetUrl}" style="background-color: #E30613; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">Reset Kata Laluan</a>
-                </div>
-            </div>
-        </div>`;
+<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;border:1px solid #e2e8f0;border-radius:10px;overflow:hidden;">
+
+  <!-- Header -->
+  <div style="background:#0F4C3A;padding:28px 24px;text-align:center;">
+    <p style="color:#95D5B2;font-size:10px;font-weight:bold;text-transform:uppercase;letter-spacing:2.5px;margin:0 0 6px 0;">Kelab Sukan &amp; Kebajikan</p>
+    <h1 style="color:#ffffff;font-size:22px;font-weight:bold;margin:0;letter-spacing:0.5px;">KELAB PERHILITAN</h1>
+    <p style="color:rgba(255,255,255,0.5);font-size:10px;margin:5px 0 0 0;">No. Pendaftaran: ${KELAB.noPertubuhan}</p>
+  </div>
+
+  <!-- Tajuk tindakan -->
+  <div style="background:#1B4332;padding:10px 24px;text-align:center;">
+    <p style="color:#52B788;font-size:12px;font-weight:bold;text-transform:uppercase;letter-spacing:1.5px;margin:0;">
+      Permohonan Tetapan Semula Kata Laluan
+    </p>
+  </div>
+
+  <!-- Badan -->
+  <div style="padding:30px 28px;background:#ffffff;color:#1e293b;line-height:1.75;">
+    <p style="margin:0 0 16px 0;">Kepada <strong>${namaPengguna}</strong>,</p>
+    <p style="margin:0 0 14px 0;">${msg.emailBody1}</p>
+    <p style="margin:0 0 24px 0;">${msg.emailBody2}</p>
+
+    <!-- Butang reset -->
+    <div style="text-align:center;margin:28px 0;">
+      <a href="${resetUrl}"
+        style="background:#0F4C3A;color:#ffffff;padding:14px 36px;text-decoration:none;border-radius:8px;font-weight:bold;font-size:14px;letter-spacing:0.3px;display:inline-block;">
+        ${msg.emailBtn}
+      </a>
+    </div>
+
+    <!-- Pautan fallback -->
+    <p style="font-size:11px;color:#64748b;margin:20px 0 3px 0;">Jika butang di atas tidak berfungsi, salin pautan berikut ke pelayar web anda:</p>
+    <p style="font-size:11px;word-break:break-all;margin:0 0 24px 0;">
+      <a href="${resetUrl}" style="color:#0F4C3A;">${resetUrl}</a>
+    </p>
+
+    <!-- Notis keselamatan -->
+    <div style="background:#fffbeb;border-left:3px solid #f59e0b;padding:12px 16px;border-radius:0 6px 6px 0;">
+      <p style="margin:0 0 4px 0;font-size:12px;font-weight:bold;color:#92400e;">Notis Keselamatan</p>
+      <p style="margin:0;font-size:12px;color:#78350f;">${msg.emailIgnore}</p>
+    </div>
+  </div>
+
+  <!-- Footer -->
+  ${footerEmelHTML()}
+
+</div>`;
 
         await sendEmail({ email: user.email, subject: msg.emailSubject, message: emailTemplate });
         res.status(200).json({ message: msg.resetEmailSent });
@@ -183,5 +228,96 @@ export const resetPassword = async (req, res) => {
         res.status(200).json({ message: msg.resetSuccess });
     } catch (error) {
         res.status(500).json({ message: msg.serverError });
+    }
+};
+
+// ==========================================
+// 5. Permohonan Padam Akaun
+// ==========================================
+export const requestDeletion = async (req, res) => {
+    const { email, no_kp, sebab } = req.body;
+
+    if (!email || !no_kp) {
+        return res.status(400).json({ message: 'E-mel dan No. Kad Pengenalan wajib diisi.' });
+    }
+
+    try {
+        const tarikh = new Date().toLocaleString('ms-MY', { timeZone: 'Asia/Kuala_Lumpur', dateStyle: 'full', timeStyle: 'short' });
+
+        const emailTemplate = `
+<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;border:1px solid #e2e8f0;border-radius:10px;overflow:hidden;">
+  <div style="background:#7F1D1D;padding:28px 24px;text-align:center;">
+    <p style="color:#FECACA;font-size:10px;font-weight:bold;text-transform:uppercase;letter-spacing:2.5px;margin:0 0 6px 0;">Kelab PERHILITAN — Sistem Pengurusan Ahli</p>
+    <h1 style="color:#ffffff;font-size:20px;font-weight:bold;margin:0;">Permohonan Pemadaman Akaun</h1>
+  </div>
+  <div style="padding:28px;background:#ffffff;color:#1e293b;line-height:1.75;">
+    <p style="margin:0 0 16px 0;">Permohonan baharu telah diterima melalui borang pemadaman akaun:</p>
+    <table style="width:100%;border-collapse:collapse;font-size:13px;">
+      <tr style="border-bottom:1px solid #f1f5f9;">
+        <td style="padding:10px 0;font-weight:bold;color:#64748b;width:40%;">E-mel</td>
+        <td style="padding:10px 0;color:#0f172a;">${email}</td>
+      </tr>
+      <tr style="border-bottom:1px solid #f1f5f9;">
+        <td style="padding:10px 0;font-weight:bold;color:#64748b;">No. Kad Pengenalan</td>
+        <td style="padding:10px 0;color:#0f172a;font-family:monospace;">${no_kp}</td>
+      </tr>
+      <tr style="border-bottom:1px solid #f1f5f9;">
+        <td style="padding:10px 0;font-weight:bold;color:#64748b;">Sebab</td>
+        <td style="padding:10px 0;color:#0f172a;">${sebab || '—'}</td>
+      </tr>
+      <tr>
+        <td style="padding:10px 0;font-weight:bold;color:#64748b;">Tarikh & Masa</td>
+        <td style="padding:10px 0;color:#0f172a;">${tarikh}</td>
+      </tr>
+    </table>
+    <div style="margin-top:24px;background:#FEF3C7;border-left:3px solid #F59E0B;padding:12px 16px;border-radius:0 6px 6px 0;">
+      <p style="margin:0;font-size:12px;color:#92400E;">Sila proses permohonan ini dalam tempoh <strong>14 hari bekerja</strong> dan maklumkan kepada pemohon melalui e-mel.</p>
+    </div>
+  </div>
+  ${footerEmelHTML()}
+</div>`;
+
+        await sendEmail({
+            email: KELAB.emel,
+            subject: `[Kelab PERHILITAN] Permohonan Padam Akaun — ${email}`,
+            message: emailTemplate,
+        });
+
+        res.status(200).json({ message: 'Permohonan berjaya dihantar.' });
+    } catch (error) {
+        console.error('Request Deletion Error:', error);
+        res.status(500).json({ message: 'Ralat pelayan. Sila cuba lagi.' });
+    }
+};
+
+// ==========================================
+// 6. Perbaharui Token (Biometrik Refresh)
+// ==========================================
+export const renewToken = async (req, res) => {
+    const { refreshToken } = req.body;
+    if (!refreshToken) return res.status(401).json({ message: 'Token tidak sah.' });
+
+    try {
+        const hashedToken = crypto.createHash('sha256').update(refreshToken).digest('hex');
+        const query = `
+            SELECT u.id, u.no_kp, u.role, u.nama_pegawai, p.nama_penempatan
+            FROM users u
+            LEFT JOIN penempatan p ON u.penempatan_id = p.id
+            WHERE u.refresh_token = ? AND u.refresh_token_expiry > NOW() AND u.status_ahli = 'aktif'
+        `;
+        const [users] = await db.query(query, [hashedToken]);
+        const user = users[0];
+
+        if (!user) return res.status(401).json({ message: 'Sesi cap jari telah luput. Sila log masuk semula.' });
+
+        const token = jwt.sign({ id: user.id, role: user.role, no_kp: user.no_kp }, process.env.JWT_SECRET, { expiresIn: '1d' });
+
+        res.status(200).json({
+            token,
+            user: { id: user.id, no_kp: user.no_kp, name: user.nama_pegawai, role: user.role, penempatan: user.nama_penempatan }
+        });
+    } catch (error) {
+        console.error("Renew Token Error:", error);
+        res.status(500).json({ message: 'Ralat pelayan.' });
     }
 };
