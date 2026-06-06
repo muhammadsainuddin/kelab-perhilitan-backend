@@ -23,7 +23,19 @@ import {
     getProfilAhliLengkap
 } from '../controllers/adminController.js';
 
+import {
+    cariAhliPenerima,
+    ciptaKempen,
+    senaraiKempenAdmin,
+    kemaskiniKempen,
+    senaraiRekodKempen,
+    senaraiGambarKempen,
+    tambahGambarKempen,
+    hapusGambarKempen
+} from '../controllers/sumbanganController.js';
+
 import { verifyToken, requireRole } from '../middleware/authMiddleware.js';
+import { upload, uploadGambar, mampatGambar } from '../middleware/uploadMiddleware.js';
 
 const router = express.Router();
 
@@ -65,7 +77,7 @@ router.get('/sejarah-bayaran', getAllResitBayaran);
 router.get('/kebajikan', senaraiKebajikan);
 router.put('/kebajikan/:id', kemaskiniStatusKebajikan);
 router.get('/berhenti', senaraiBerhentiAhli);
-router.put('/berhenti/:id/lulus', kemaskiniBerhentiAhli);
+router.put('/berhenti/:id', kemaskiniBerhentiAhli);
 
 // ------------------------------------------
 // STATISTIK & DIREKTORI
@@ -74,6 +86,18 @@ router.get('/statistik-tunggakan', getStatistikTunggakan);
 router.get('/direktori-bersepadu', getDirektoriBersepadu);
 
 router.get('/acara-ahli/:no_kp', verifyToken, requireRole(['Admin', 'Super Admin']), getAcaraAhli);
+
+// ------------------------------------------
+// KEMPEN SUMBANGAN
+// ------------------------------------------
+router.get('/sumbangan/cari-ahli',        cariAhliPenerima);
+router.get('/sumbangan/kempen',           senaraiKempenAdmin);
+router.post('/sumbangan/kempen',          upload.single('qr_code'), ciptaKempen);
+router.put('/sumbangan/kempen/:id',       upload.single('qr_code'), kemaskiniKempen);
+router.get('/sumbangan/kempen/:id/rekod',           senaraiRekodKempen);
+router.get('/sumbangan/kempen/:id/gambar',          senaraiGambarKempen);
+router.post('/sumbangan/kempen/:id/gambar',         uploadGambar('gambar', 10), mampatGambar, tambahGambarKempen);
+router.delete('/sumbangan/kempen/:id/gambar/:gid',  hapusGambarKempen);
 
 
 

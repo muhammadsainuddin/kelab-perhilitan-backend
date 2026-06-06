@@ -3,6 +3,15 @@ import bcrypt from 'bcryptjs';
 import { janaNoAhliBaru } from '../utils/keahlianHelper.js';
 import { semakStatusBerbayar } from '../utils/keahlianHelper.js';
 
+// Auto-migrate: tambah kolum catatan_admin ke berhenti_ahli jika belum ada
+(async () => {
+    try {
+        await db.query(`ALTER TABLE berhenti_ahli ADD COLUMN catatan_admin TEXT NULL`);
+    } catch (e) {
+        if (e.code !== 'ER_DUP_FIELDNAME') console.error('[migrate] berhenti_ahli.catatan_admin:', e.message);
+    }
+})();
+
 // =====================================================================
 // NOTA SELURUH FAIL:
 // - Semua data ahli/staff diambil dari jadual `users` (bukan senarai_staff)
@@ -175,9 +184,10 @@ export const kemaskiniStatusKebajikan = async (req, res) => {
 export const senaraiBerhentiAhli = async (req, res) => {
     try {
         const query = `
-            SELECT 
-                b.id, b.no_kp, u.nama_pegawai, p.nama_penempatan AS penempatan,
-                b.sebab_berhenti, b.status_permohonan, b.tarikh_mohon
+            SELECT
+                b.id, b.no_kp, u.nama_pegawai, u.no_ahli, u.gred_penyandang_sspa AS gred,
+                p.nama_penempatan AS penempatan,
+                b.sebab_berhenti, b.catatan_admin, b.status_permohonan, b.tarikh_mohon
             FROM berhenti_ahli b
             JOIN users u ON b.no_kp = u.no_kp
             LEFT JOIN penempatan p ON u.penempatan_id = p.id
@@ -193,18 +203,17 @@ export const senaraiBerhentiAhli = async (req, res) => {
 
 export const kemaskiniBerhentiAhli = async (req, res) => {
     const { id } = req.params;
-    const { no_kp, status_permohonan } = req.body;
+    const { no_kp, status_permohonan, catatan_admin } = req.body;
 
     try {
-        await db.query(`UPDATE berhenti_ahli SET status_permohonan = ? WHERE id = ?`, [status_permohonan, id]);
+        await db.query(
+            `UPDATE berhenti_ahli SET status_permohonan = ?, catatan_admin = ? WHERE id = ?`,
+            [status_permohonan, catatan_admin || null, id]
+        );
 
-        // Jika LULUS -> nonaktifkan login ahli (status_ahli = 'tidak aktif')
         if (status_permohonan === 'LULUS') {
             await db.query(`UPDATE users SET status_ahli = 'tidak aktif' WHERE no_kp = ?`, [no_kp]);
-        }
-        // Jika DITOLAK -> kekalkan login aktif (tiada perubahan diperlukan,
-        // status_ahli sepatutnya masih 'aktif')
-        else if (status_permohonan === 'DITOLAK') {
+        } else if (status_permohonan === 'DITOLAK') {
             await db.query(`UPDATE users SET status_ahli = 'aktif' WHERE no_kp = ?`, [no_kp]);
         }
 
@@ -400,8 +409,7 @@ export const senaraiSemuaStaff = async (req, res) => {
     }
 };
 
-// Import pukal kakitangan ke jadual users.
-// Penempatan dipetakan melalui jadual penempatan (cari/cipta id).
+// Daftar kakitangan baharu secara pukal — INSERT/UPSERT + auto-aktif sebagai ahli.
 export const tambahStaffBulk = async (req, res) => {
     const { staffList } = req.body;
     if (!staffList || staffList.length === 0) {
@@ -409,45 +417,58 @@ export const tambahStaffBulk = async (req, res) => {
     }
 
     try {
+        let berjaya = 0; const gagal = [];
+
         for (const s of staffList) {
-            // Pastikan penempatan wujud, dapatkan id-nya
+            if (!s.no_kp || !s.nama_pegawai) { gagal.push(s.no_kp || '?'); continue; }
+
+            // Resolve penempatan → penempatan_id
             let penempatanId = null;
             if (s.penempatan && String(s.penempatan).trim() !== '') {
                 const namaPenempatan = String(s.penempatan).toUpperCase().trim();
-                const [adaP] = await db.query(
-                    `SELECT id FROM penempatan WHERE nama_penempatan = ?`, [namaPenempatan]
-                );
+                const [adaP] = await db.query(`SELECT id FROM penempatan WHERE nama_penempatan = ?`, [namaPenempatan]);
                 if (adaP.length > 0) {
                     penempatanId = adaP[0].id;
                 } else {
-                    const [insP] = await db.query(
-                        `INSERT INTO penempatan (nama_penempatan) VALUES (?)`, [namaPenempatan]
-                    );
+                    const [insP] = await db.query(`INSERT INTO penempatan (nama_penempatan) VALUES (?)`, [namaPenempatan]);
                     penempatanId = insP.insertId;
                 }
             }
 
-            // Upsert pengguna berdasarkan no_kp (UNIQUE)
+            const gred    = (s.gred_sspa || s.gred_penyandang_sspa || '').toUpperCase() || null;
+            const jawatan = s.jawatan_kelab && s.jawatan_kelab !== '' ? s.jawatan_kelab : null;
+            const nama    = (s.nama_pegawai || '').toUpperCase();
+
             await db.query(
-                `INSERT INTO users (no_kp, nama_pegawai, gred_penyandang_sspa, penempatan_id) 
-                 VALUES (?, ?, ?, ?)
-                 ON DUPLICATE KEY UPDATE 
-                    nama_pegawai = VALUES(nama_pegawai),
+                `INSERT INTO users (no_kp, nama_pegawai, gred_penyandang_sspa, penempatan_id,
+                                    jawatan_kelab, jenis_potongan, status_ahli)
+                 VALUES (?, ?, ?, ?, ?, 'Bayar secara manual', 'aktif')
+                 ON DUPLICATE KEY UPDATE
+                    nama_pegawai         = VALUES(nama_pegawai),
                     gred_penyandang_sspa = VALUES(gred_penyandang_sspa),
-                    penempatan_id = VALUES(penempatan_id)`,
-                [
-                    s.no_kp,
-                    (s.nama_pegawai || '').toUpperCase(),
-                    (s.gred_sspa || s.gred_penyandang_sspa || '').toUpperCase(),
-                    penempatanId
-                ]
+                    penempatan_id        = VALUES(penempatan_id),
+                    jawatan_kelab        = COALESCE(VALUES(jawatan_kelab), jawatan_kelab),
+                    status_ahli          = 'aktif'`,
+                [s.no_kp, nama, gred, penempatanId, jawatan]
             );
+
+            // Jana no_ahli jika belum ada
+            const [[u]] = await db.query(`SELECT no_ahli FROM users WHERE no_kp = ?`, [s.no_kp]);
+            if (!u.no_ahli || String(u.no_ahli).trim() === '') {
+                const noAhli = await janaNoAhliBaru();
+                await db.query(`UPDATE users SET no_ahli = ? WHERE no_kp = ?`, [noAhli, s.no_kp]);
+            }
+
+            berjaya++;
         }
 
-        res.status(200).json({ success: true, message: `${staffList.length} rekod kakitangan berjaya disimpan.` });
+        const msg = gagal.length > 0
+            ? `${berjaya} berjaya, ${gagal.length} gagal (No. KP: ${gagal.join(', ')}).`
+            : `${berjaya} rekod kakitangan berjaya didaftarkan.`;
+        res.status(200).json({ success: true, message: msg, berjaya, gagal });
     } catch (error) {
-        console.error("Ralat Import Pukal:", error);
-        res.status(500).json({ success: false, message: "Ralat pangkalan data semasa import." });
+        console.error("Ralat Daftar Pukal:", error);
+        res.status(500).json({ success: false, message: "Ralat pangkalan data semasa daftar pukal." });
     }
 };
 

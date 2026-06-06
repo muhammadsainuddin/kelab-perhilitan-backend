@@ -20,11 +20,15 @@ export const janaBilFPX = async ({
     callbackUrl,
     referenceNo,
     user,
-    jenis = 'YURAN' // 'YURAN' atau 'KEDAI'
+    jenis = 'YURAN',           // 'YURAN' | 'KEDAI' | 'SUMBANGAN'
+    categoryCodeOverride = null // override kod kategori terus (untuk SUMBANGAN)
 }) => {
     const amountInCents = Math.round(parseFloat(amaun) * 100);
-    const billName      = jenis === 'YURAN' ? 'Yuran Kelab PERHILITAN' : 'Kedai Kelab PERHILITAN';
-    const categoryCode  = jenis === 'YURAN' ? CATEGORY_CODE_YURAN : CATEGORY_CODE_KEDAI;
+    const billName      = jenis === 'YURAN' ? 'Yuran Kelab PERHILITAN'
+                        : jenis === 'KEDAI' ? 'Kedai Kelab PERHILITAN'
+                        : 'Sumbangan Kelab PERHILITAN';
+    const categoryCode  = categoryCodeOverride
+                        || (jenis === 'YURAN' ? CATEGORY_CODE_YURAN : CATEGORY_CODE_KEDAI);
 
     // ── Resit E-mel Tersuai (Hanya untuk Yuran) ──
     let contentEmail = "";

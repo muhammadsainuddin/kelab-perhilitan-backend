@@ -70,12 +70,22 @@ export const mohonBerhenti = async (req, res) => {
     const { sebab_berhenti } = req.body;
 
     try {
-        const query = `INSERT INTO berhenti_ahli (no_kp, sebab_berhenti) VALUES (?, ?)`;
-        await db.query(query, [no_kp, sebab_berhenti]);
+        const [existing] = await db.query(
+            `SELECT id FROM berhenti_ahli WHERE no_kp = ? AND status_permohonan = 'MENUNGGU'`,
+            [no_kp]
+        );
+        if (existing.length > 0) {
+            return res.status(400).json({
+                success: false,
+                message: 'Anda sudah mempunyai permohonan berhenti yang sedang dalam semakan.'
+            });
+        }
 
-        res.status(201).json({ 
-            success: true, 
-            message: "Permohonan berhenti ahli telah dihantar kepada urusetia." 
+        await db.query(`INSERT INTO berhenti_ahli (no_kp, sebab_berhenti) VALUES (?, ?)`, [no_kp, sebab_berhenti]);
+
+        res.status(201).json({
+            success: true,
+            message: "Permohonan berhenti ahli telah dihantar kepada urusetia."
         });
 
     } catch (error) {
