@@ -339,6 +339,21 @@ export const senaraiPesertaAcara = async (req, res) => {
     }
 };
 
+// B4b. Padam satu peserta dari acara
+export const padamPesertaAcara = async (req, res) => {
+    const { id } = req.params;
+    try {
+        const [hasil] = await db.query(`DELETE FROM penyertaan_acara WHERE id = ?`, [id]);
+        if (hasil.affectedRows === 0) {
+            return res.status(404).json({ success: false, message: 'Rekod peserta tidak dijumpai.' });
+        }
+        res.status(200).json({ success: true, message: 'Peserta berjaya dibuang dari acara.' });
+    } catch (error) {
+        console.error('Ralat Padam Peserta:', error);
+        res.status(500).json({ success: false, message: 'Gagal memadam peserta.' });
+    }
+};
+
 // B5. Padam acara (akan padam penyertaan juga melalui ON DELETE CASCADE)
 export const padamAcara = async (req, res) => {
     const { id } = req.params;

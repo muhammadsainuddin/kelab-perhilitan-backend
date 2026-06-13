@@ -68,13 +68,15 @@ export const getStatistikKewangan = async (req, res) => {
 //    GET /api/admin/kewangan/transaksi
 // ==========================================
 export const getSenaraiTransaksi = async (req, res) => {
-    const { jenis, kategori, cari, page = 1, limit = 20 } = req.query;
+    const { jenis, kategori, cari, tahun, bulan, page = 1, limit = 20 } = req.query;
     const offset = (parseInt(page) - 1) * parseInt(limit);
 
     try {
         let conditions = [];
         let params = [];
 
+        if (tahun)    { conditions.push('YEAR(t.tarikh_transaksi) = ?');  params.push(parseInt(tahun)); }
+        if (bulan)    { conditions.push('MONTH(t.tarikh_transaksi) = ?'); params.push(parseInt(bulan)); }
         if (jenis)    { conditions.push('t.jenis_aliran = ?'); params.push(jenis); }
         if (kategori) { conditions.push('t.kategori = ?');     params.push(kategori); }
         if (cari) {
@@ -462,6 +464,63 @@ export const rekodTransaksi = async (req, res) => {
     } catch (error) {
         console.error('[KEWANGAN] rekodTransaksi:', error.message);
         return res.status(500).json({ success: false, message: 'Ralat menyimpan rekod kewangan.' });
+    }
+};
+
+// ==========================================
+// 13. KEMASKINI TRANSAKSI
+//     PUT /api/admin/kewangan/transaksi/:id
+// ==========================================
+export const kemaskiniTransaksi = async (req, res) => {
+    const { id } = req.params;
+    const { jenis_aliran, kategori, amaun, nota, rujukan, penerima_bayaran, tarikh } = req.body;
+
+    if (!['MASUK', 'KELUAR'].includes(jenis_aliran)) {
+        return res.status(400).json({ success: false, message: 'Jenis aliran tidak sah.' });
+    }
+    if (!kategori || !amaun || parseFloat(amaun) <= 0) {
+        return res.status(400).json({ success: false, message: 'Sila isi kategori dan amaun yang sah.' });
+    }
+
+    try {
+        const [result] = await db.query(`
+            UPDATE transaksi_kewangan
+            SET jenis_aliran = ?, kategori = ?, amaun = ?,
+                nota = ?, rujukan = ?, penerima_bayaran = ?,
+                tarikh_transaksi = ?
+            WHERE id = ?
+        `, [
+            jenis_aliran, kategori, parseFloat(amaun),
+            nota || null, rujukan || null, penerima_bayaran || null,
+            tarikh ? new Date(tarikh) : new Date(),
+            id
+        ]);
+
+        if (result.affectedRows === 0) {
+            return res.status(404).json({ success: false, message: 'Rekod tidak dijumpai.' });
+        }
+        return res.status(200).json({ success: true, message: 'Rekod berjaya dikemaskini.' });
+    } catch (error) {
+        console.error('[KEWANGAN] kemaskiniTransaksi:', error.message);
+        return res.status(500).json({ success: false, message: 'Ralat mengemaskini rekod.' });
+    }
+};
+
+// ==========================================
+// 14. PADAM TRANSAKSI
+//     DELETE /api/admin/kewangan/transaksi/:id
+// ==========================================
+export const padamTransaksi = async (req, res) => {
+    const { id } = req.params;
+    try {
+        const [result] = await db.query('DELETE FROM transaksi_kewangan WHERE id = ?', [id]);
+        if (result.affectedRows === 0) {
+            return res.status(404).json({ success: false, message: 'Rekod tidak dijumpai.' });
+        }
+        return res.status(200).json({ success: true, message: 'Rekod berjaya dipadam.' });
+    } catch (error) {
+        console.error('[KEWANGAN] padamTransaksi:', error.message);
+        return res.status(500).json({ success: false, message: 'Ralat memadam rekod.' });
     }
 };
 

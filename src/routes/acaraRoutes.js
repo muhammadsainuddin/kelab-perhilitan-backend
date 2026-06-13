@@ -10,6 +10,7 @@ import {
     kemaskiniAcara,
     senaraiPesertaAcara,
     padamAcara,
+    padamPesertaAcara,
     analisisAcara,
     kemaskiniJersi,
     tambahPesertaAdmin,
@@ -42,7 +43,8 @@ router.get('/admin/peserta/:id',     adminOnly, senaraiPesertaAcara);
 router.delete('/admin/padam/:id',    adminOnly, padamAcara);
 router.get('/admin/analisis/:id',    adminOnly, analisisAcara);
 router.put('/admin/jersi',           adminOnly, kemaskiniJersi);
-router.post('/admin/tambah-peserta', adminOnly, tambahPesertaAdmin);
-router.get('/admin/cari-ahli',       adminOnly, cariAhliUntukAcara);
+router.post('/admin/tambah-peserta',    adminOnly, tambahPesertaAdmin);
+router.delete('/admin/padam-peserta/:id', adminOnly, padamPesertaAcara);
+router.get('/admin/cari-ahli',          adminOnly, cariAhliUntukAcara);
 
 export default router;

@@ -6,6 +6,7 @@ import {
     getStatistikKewangan, getSenaraiTransaksi, rekodKeluar, eksportCSV,
     getPenyataTahunan, getSenaraiSumbangan, rekodSumbangan, importSumbanganBulk,
     getProdukLaris, getLaporanBulanan, getLaporanHarian, rekodTransaksi,
+    kemaskiniTransaksi, padamTransaksi,
 } from '../controllers/kewanganController.js';
 import { verifyToken as vT, requireRole as rR } from '../middleware/authMiddleware.js';
 
@@ -28,6 +29,8 @@ routerK.post('/sumbangan/import', importSumbanganBulk);
 
 // Rekod tunggal (masuk/keluar), laporan berkala, produk laris
 routerK.post('/rekod',            rekodTransaksi);
+routerK.put('/transaksi/:id',     kemaskiniTransaksi);
+routerK.delete('/transaksi/:id',  padamTransaksi);
 routerK.get('/produk-laris',      getProdukLaris);
 routerK.get('/laporan-bulanan',   getLaporanBulanan);
 routerK.get('/laporan-harian',    getLaporanHarian);

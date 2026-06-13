@@ -72,7 +72,7 @@ export const login = async (req, res) => {
     try {
         // Carian dibuat berdasarkan 'emel' di dalam jadual 'users', join dengan 'penempatan'
         const query = `
-            SELECT u.id, u.no_kp, u.password, u.role, u.status_ahli, u.nama_pegawai, p.nama_penempatan 
+            SELECT u.id, u.no_kp, u.password, u.role, u.status_ahli, u.nama_pegawai, u.gambar, p.nama_penempatan
             FROM users u
             LEFT JOIN penempatan p ON u.penempatan_id = p.id
             WHERE u.emel = ?
@@ -101,7 +101,7 @@ export const login = async (req, res) => {
             message: "Berjaya log masuk.",
             token,
             refreshToken,
-            user: { id: user.id, no_kp: user.no_kp, name: user.nama_pegawai, role: user.role, penempatan: user.nama_penempatan }
+            user: { id: user.id, no_kp: user.no_kp, name: user.nama_pegawai, role: user.role, penempatan: user.nama_penempatan, gambar: user.gambar || null }
         });
     } catch (error) {
         console.error("Login Error:", error);
