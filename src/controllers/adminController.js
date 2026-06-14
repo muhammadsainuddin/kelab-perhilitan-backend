@@ -234,7 +234,8 @@ export const senaraiSemuaAhli = async (req, res) => {
         const query = `
             SELECT
                 u.id, u.no_kp, u.nama_pegawai, u.gred_penyandang_sspa AS gred_sspa,
-                p.nama_penempatan AS penempatan, u.emel AS email, u.phone AS no_tel,
+                p.nama_penempatan AS penempatan, u.penempatan_id,
+                u.emel AS email, u.phone AS no_tel,
                 u.jenis_potongan, u.yuran_kelab_bulanan, u.status_ahli, u.no_ahli, u.role,
                 u.gambar, u.jawatan_kelab,
                 CASE WHEN u.password IS NOT NULL AND u.password != '' THEN 1 ELSE 0 END AS has_daftar,
@@ -754,5 +755,114 @@ export const getAcaraAhli = async (req, res) => {
         res.status(200).json({ success: true, data: rows });
     } catch (error) {
         res.status(500).json({ success: false, message: "Gagal menarik rekod acara." });
+    }
+}
+
+// =====================================================================
+// PENGURUSAN PENEMPATAN (PTJ)
+// =====================================================================
+
+export const senaraiPenempatan = async (req, res) => {
+    try {
+        const [rows] = await db.query(`
+            SELECT
+                p.id,
+                p.nama_penempatan,
+                p.induk_id,
+                induk.nama_penempatan AS nama_induk,
+                COUNT(DISTINCT u.no_kp) AS jumlah_ahli
+            FROM penempatan p
+            LEFT JOIN penempatan induk ON p.induk_id = induk.id
+            LEFT JOIN users u ON u.penempatan_id = p.id
+            GROUP BY p.id, p.nama_penempatan, p.induk_id, induk.nama_penempatan
+            ORDER BY COALESCE(p.induk_id, p.id) ASC, p.induk_id IS NOT NULL ASC, p.nama_penempatan ASC
+        `);
+        res.json({ success: true, data: rows });
+    } catch (error) {
+        res.status(500).json({ success: false, message: "Gagal menarik senarai penempatan." });
+    }
+};
+
+export const tambahPenempatan = async (req, res) => {
+    const { nama_penempatan, induk_id } = req.body;
+    if (!nama_penempatan?.trim()) {
+        return res.status(400).json({ success: false, message: "Nama penempatan wajib diisi." });
+    }
+    try {
+        const [ada] = await db.query(
+            `SELECT id FROM penempatan WHERE UPPER(TRIM(nama_penempatan)) = UPPER(TRIM(?))`,
+            [nama_penempatan]
+        );
+        if (ada.length > 0) {
+            return res.status(409).json({ success: false, message: "Nama penempatan sudah wujud." });
+        }
+        const [result] = await db.query(
+            `INSERT INTO penempatan (nama_penempatan, induk_id) VALUES (?, ?)`,
+            [nama_penempatan.trim(), induk_id || null]
+        );
+        res.status(201).json({ success: true, message: "Penempatan berjaya ditambah.", id: result.insertId });
+    } catch (error) {
+        res.status(500).json({ success: false, message: "Gagal menambah penempatan." });
+    }
+};
+
+export const kemaskiniPenempatan = async (req, res) => {
+    const { id } = req.params;
+    const { nama_penempatan, induk_id } = req.body;
+    if (!nama_penempatan?.trim()) {
+        return res.status(400).json({ success: false, message: "Nama penempatan wajib diisi." });
+    }
+    try {
+        const [ada] = await db.query(
+            `SELECT id FROM penempatan WHERE UPPER(TRIM(nama_penempatan)) = UPPER(TRIM(?)) AND id != ?`,
+            [nama_penempatan, id]
+        );
+        if (ada.length > 0) {
+            return res.status(409).json({ success: false, message: "Nama penempatan sudah digunakan oleh rekod lain." });
+        }
+        // Elak induk_id menunjuk kepada diri sendiri atau anak (cegah gelung)
+        if (induk_id && Number(induk_id) === Number(id)) {
+            return res.status(400).json({ success: false, message: "Penempatan tidak boleh menjadi induk kepada dirinya sendiri." });
+        }
+        await db.query(
+            `UPDATE penempatan SET nama_penempatan = ?, induk_id = ? WHERE id = ?`,
+            [nama_penempatan.trim(), induk_id || null, id]
+        );
+        res.json({ success: true, message: "Penempatan berjaya dikemas kini." });
+    } catch (error) {
+        res.status(500).json({ success: false, message: "Gagal mengemaskini penempatan." });
+    }
+};
+
+export const hapusPenempatan = async (req, res) => {
+    const { id } = req.params;
+    try {
+        // Semak sama ada ada ahli menggunakan penempatan ini
+        const [[{ jumlahAhli }]] = await db.query(
+            `SELECT COUNT(*) AS jumlahAhli FROM users WHERE penempatan_id = ?`, [id]
+        );
+        if (jumlahAhli > 0) {
+            return res.status(409).json({
+                success: false,
+                message: `Tidak dapat padam — ${jumlahAhli} ahli masih menggunakan penempatan ini.`
+            });
+        }
+        // Semak sama ada ada anak-anak PTJ di bawah penempatan ini
+        const [[{ jumlahAnak }]] = await db.query(
+            `SELECT COUNT(*) AS jumlahAnak FROM penempatan WHERE induk_id = ?`, [id]
+        );
+        if (jumlahAnak > 0) {
+            return res.status(409).json({
+                success: false,
+                message: `Tidak dapat padam — ${jumlahAnak} PTJ anak masih berada di bawah penempatan ini.`
+            });
+        }
+        const [result] = await db.query(`DELETE FROM penempatan WHERE id = ?`, [id]);
+        if (result.affectedRows === 0) {
+            return res.status(404).json({ success: false, message: "Penempatan tidak dijumpai." });
+        }
+        res.json({ success: true, message: "Penempatan berjaya dipadam." });
+    } catch (error) {
+        res.status(500).json({ success: false, message: "Gagal memadam penempatan." });
     }
 };

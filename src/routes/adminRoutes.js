@@ -20,7 +20,11 @@ import {
     getAllResitBayaran,
     getDirektoriBersepadu,
     getAcaraAhli,
-    getProfilAhliLengkap
+    getProfilAhliLengkap,
+    senaraiPenempatan,
+    tambahPenempatan,
+    kemaskiniPenempatan,
+    hapusPenempatan
 } from '../controllers/adminController.js';
 
 import {
@@ -101,7 +105,14 @@ router.delete('/sumbangan/kempen/:id/gambar/:gid',  hapusGambarKempen);
 
 
 
-// Tambah laluan ini di bawah kumpulan route admin yang lain
 router.get('/profil-ahli/:no_kp', verifyToken, requireRole(['Admin', 'Super Admin']), getProfilAhliLengkap);
+
+// ------------------------------------------
+// PENGURUSAN PENEMPATAN (PTJ)
+// ------------------------------------------
+router.get('/penempatan',         senaraiPenempatan);
+router.post('/penempatan',        tambahPenempatan);
+router.put('/penempatan/:id',     kemaskiniPenempatan);
+router.delete('/penempatan/:id',  hapusPenempatan);
 
 export default router;

@@ -112,7 +112,12 @@ export const updateMyProfile = async (req, res) => {
 // ==========================================
 export const getSenaraiPTJ = async (req, res) => {
     try {
-        const [ptj] = await db.query('SELECT id, nama_penempatan FROM penempatan ORDER BY nama_penempatan ASC');
+        // Ambil semua PTJ dengan induk_id untuk bina hierarki
+        const [ptj] = await db.query(`
+            SELECT id, nama_penempatan, induk_id
+            FROM penempatan
+            ORDER BY COALESCE(induk_id, id) ASC, induk_id IS NOT NULL ASC, nama_penempatan ASC
+        `);
         res.status(200).json({ success: true, data: ptj });
     } catch (error) {
         res.status(500).json({ success: false, message: "Ralat menarik senarai PTJ." });

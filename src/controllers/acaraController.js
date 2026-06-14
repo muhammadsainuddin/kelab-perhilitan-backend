@@ -8,13 +8,21 @@ const deriveJantina = (no_kp) => {
     return isNaN(last) ? null : (last % 2 === 1 ? 'Lelaki' : 'Perempuan');
 };
 
-// Migration IIFE — tambah kolum jantina & kategori_jantina
+// Migration IIFE — tambah kolum jantina, kategori_jantina, tarikh_tamat & maklumat pergerakan
 ;(async () => {
     try {
         const migrations = [
             `ALTER TABLE users ADD COLUMN jantina ENUM('Lelaki','Perempuan') NULL`,
             `ALTER TABLE acara ADD COLUMN kategori_jantina ENUM('Semua','Lelaki','Perempuan') NOT NULL DEFAULT 'Semua'`,
+            `ALTER TABLE acara ADD COLUMN tarikh_tamat DATE NULL`,
             `ALTER TABLE penyertaan_acara ADD COLUMN jantina ENUM('Lelaki','Perempuan') NULL`,
+            `ALTER TABLE penyertaan_acara ADD COLUMN tarikh_pergi DATE NULL`,
+            `ALTER TABLE penyertaan_acara ADD COLUMN tarikh_balik DATE NULL`,
+            `ALTER TABLE penyertaan_acara ADD COLUMN kaedah_pergerakan ENUM('Darat','Bot','Penerbangan') NULL`,
+            `ALTER TABLE penyertaan_acara ADD COLUMN no_penerbangan_pergi VARCHAR(20) NULL`,
+            `ALTER TABLE penyertaan_acara ADD COLUMN masa_penerbangan_pergi VARCHAR(10) NULL`,
+            `ALTER TABLE penyertaan_acara ADD COLUMN no_penerbangan_balik VARCHAR(20) NULL`,
+            `ALTER TABLE penyertaan_acara ADD COLUMN masa_penerbangan_balik VARCHAR(10) NULL`,
         ];
         for (const sql of migrations) {
             try { await db.query(sql); } catch (e) { if (e.code !== 'ER_DUP_FIELDNAME') throw e; }
@@ -196,7 +204,7 @@ export const batalSertai = async (req, res) => {
 export const ciptaAcara = async (req, res) => {
     const {
         nama_acara, jenis_acara, keterangan, lokasi,
-        tarikh_acara, tarikh_tutup, emel_urusetia, no_tel_urusetia,
+        tarikh_acara, tarikh_tamat, tarikh_tutup, emel_urusetia, no_tel_urusetia,
         senarai_sukan, benarkan_pelbagai_sukan, had_peserta, kategori_jantina
     } = req.body;
 
@@ -219,11 +227,11 @@ export const ciptaAcara = async (req, res) => {
 
         const [result] = await db.query(`
             INSERT INTO acara
-            (nama_acara, jenis_acara, keterangan, lokasi, tarikh_acara, tarikh_tutup, poster, emel_urusetia, no_tel_urusetia, status, senarai_sukan, benarkan_pelbagai_sukan, had_peserta, kategori_jantina)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'AKTIF', ?, ?, ?, ?)
+            (nama_acara, jenis_acara, keterangan, lokasi, tarikh_acara, tarikh_tamat, tarikh_tutup, poster, emel_urusetia, no_tel_urusetia, status, senarai_sukan, benarkan_pelbagai_sukan, had_peserta, kategori_jantina)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'AKTIF', ?, ?, ?, ?)
         `, [
             nama_acara, jenis_acara || null, keterangan || null, lokasi || null,
-            tarikh_acara || null, tarikh_tutup || null, posterString,
+            tarikh_acara || null, tarikh_tamat || null, tarikh_tutup || null, posterString,
             emel_urusetia || null, no_tel_urusetia || null,
             senaraiSukanStr, benarkanPelbagai, hadPesertaVal, kategoriJantina
         ]);
@@ -257,7 +265,7 @@ export const kemaskiniAcara = async (req, res) => {
     const { id } = req.params;
     const {
         nama_acara, jenis_acara, keterangan, lokasi,
-        tarikh_acara, tarikh_tutup, emel_urusetia, no_tel_urusetia, status,
+        tarikh_acara, tarikh_tamat, tarikh_tutup, emel_urusetia, no_tel_urusetia, status,
         senarai_sukan, benarkan_pelbagai_sukan, had_peserta, kategori_jantina
     } = req.body;
 
@@ -270,6 +278,7 @@ export const kemaskiniAcara = async (req, res) => {
         if (keterangan !== undefined)      { fields.push('keterangan = ?');      values.push(keterangan || null); }
         if (lokasi !== undefined)          { fields.push('lokasi = ?');          values.push(lokasi || null); }
         if (tarikh_acara !== undefined)    { fields.push('tarikh_acara = ?');    values.push(tarikh_acara || null); }
+        if (tarikh_tamat !== undefined)    { fields.push('tarikh_tamat = ?');    values.push(tarikh_tamat || null); }
         if (tarikh_tutup !== undefined)    { fields.push('tarikh_tutup = ?');    values.push(tarikh_tutup || null); }
         if (emel_urusetia !== undefined)   { fields.push('emel_urusetia = ?');   values.push(emel_urusetia || null); }
         if (no_tel_urusetia !== undefined) { fields.push('no_tel_urusetia = ?'); values.push(no_tel_urusetia || null); }
@@ -324,6 +333,9 @@ export const senaraiPesertaAcara = async (req, res) => {
                 u.emel AS email, u.phone AS no_tel, u.no_ahli, u.saiz_baju,
                 u.jenis_potongan,
                 pt.nama_penempatan AS penempatan,
+                p.tarikh_pergi, p.tarikh_balik, p.kaedah_pergerakan,
+                p.no_penerbangan_pergi, p.masa_penerbangan_pergi,
+                p.no_penerbangan_balik, p.masa_penerbangan_balik,
                 ${isPaidSQL} AS is_paid
             FROM penyertaan_acara p
             JOIN users u ON p.no_kp = u.no_kp
@@ -351,6 +363,49 @@ export const padamPesertaAcara = async (req, res) => {
     } catch (error) {
         console.error('Ralat Padam Peserta:', error);
         res.status(500).json({ success: false, message: 'Gagal memadam peserta.' });
+    }
+};
+
+// B4c. Kemaskini maklumat pergerakan peserta
+export const kemaskiniPergerakanPeserta = async (req, res) => {
+    const { id } = req.params;
+    const {
+        tarikh_pergi, tarikh_balik, kaedah_pergerakan,
+        no_penerbangan_pergi, masa_penerbangan_pergi,
+        no_penerbangan_balik, masa_penerbangan_balik
+    } = req.body;
+
+    const kaedahSah = ['Darat', 'Bot', 'Penerbangan'];
+    const kaedah = kaedahSah.includes(kaedah_pergerakan) ? kaedah_pergerakan : null;
+
+    try {
+        const [hasil] = await db.query(`
+            UPDATE penyertaan_acara SET
+                tarikh_pergi           = ?,
+                tarikh_balik           = ?,
+                kaedah_pergerakan      = ?,
+                no_penerbangan_pergi   = ?,
+                masa_penerbangan_pergi = ?,
+                no_penerbangan_balik   = ?,
+                masa_penerbangan_balik = ?
+            WHERE id = ?
+        `, [
+            tarikh_pergi   || null,
+            tarikh_balik   || null,
+            kaedah,
+            kaedah === 'Penerbangan' ? (no_penerbangan_pergi   || null) : null,
+            kaedah === 'Penerbangan' ? (masa_penerbangan_pergi || null) : null,
+            kaedah === 'Penerbangan' ? (no_penerbangan_balik   || null) : null,
+            kaedah === 'Penerbangan' ? (masa_penerbangan_balik || null) : null,
+            id
+        ]);
+        if (hasil.affectedRows === 0) {
+            return res.status(404).json({ success: false, message: 'Rekod peserta tidak dijumpai.' });
+        }
+        res.json({ success: true, message: 'Maklumat pergerakan berjaya dikemas kini.' });
+    } catch (error) {
+        console.error('Ralat Kemaskini Pergerakan:', error);
+        res.status(500).json({ success: false, message: 'Gagal mengemaskini maklumat pergerakan.' });
     }
 };
 

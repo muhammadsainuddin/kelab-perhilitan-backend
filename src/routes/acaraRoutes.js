@@ -11,6 +11,7 @@ import {
     senaraiPesertaAcara,
     padamAcara,
     padamPesertaAcara,
+    kemaskiniPergerakanPeserta,
     analisisAcara,
     kemaskiniJersi,
     tambahPesertaAdmin,
@@ -44,7 +45,8 @@ router.delete('/admin/padam/:id',    adminOnly, padamAcara);
 router.get('/admin/analisis/:id',    adminOnly, analisisAcara);
 router.put('/admin/jersi',           adminOnly, kemaskiniJersi);
 router.post('/admin/tambah-peserta',    adminOnly, tambahPesertaAdmin);
-router.delete('/admin/padam-peserta/:id', adminOnly, padamPesertaAcara);
-router.get('/admin/cari-ahli',          adminOnly, cariAhliUntukAcara);
+router.delete('/admin/padam-peserta/:id',      adminOnly, padamPesertaAcara);
+router.put('/admin/pergerakan-peserta/:id',   adminOnly, kemaskiniPergerakanPeserta);
+router.get('/admin/cari-ahli',               adminOnly, cariAhliUntukAcara);
 
 export default router;
