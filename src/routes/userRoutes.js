@@ -11,6 +11,8 @@ import {
     senaraiAJK
 } from '../controllers/userController.js';
 
+import { resitSayaBiroAngkasa, detailResitBiro } from '../controllers/resitController.js';
+
 import {
     senaraiKempenAktif,
     rekodSumbangan,
@@ -54,7 +56,9 @@ router.get('/senarai-ptj', getSenaraiPTJ);
 
 // hubungiKelab: Ahli hantar pertanyaan / permohonan bantuan melalui emel
 router.post('/hubungi-kelab', hubungiKelab);
-router.get('/senarai-ajk',   senaraiAJK);
+router.get('/senarai-ajk',                  senaraiAJK);
+router.get('/resit-biro-angkasa',           resitSayaBiroAngkasa);
+router.get('/resit-biro-angkasa/:no_resit', detailResitBiro);
 
 // ==========================================
 // KEMPEN SUMBANGAN

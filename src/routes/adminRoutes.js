@@ -38,6 +38,13 @@ import {
     hapusGambarKempen
 } from '../controllers/sumbanganController.js';
 
+import {
+    janaResitBiroAngkasa,
+    senaraiResitBiroAdmin,
+    statistikResitBiro,
+    detailResitBiro
+} from '../controllers/resitController.js';
+
 import { verifyToken, requireRole } from '../middleware/authMiddleware.js';
 import { upload, uploadGambar, mampatGambar } from '../middleware/uploadMiddleware.js';
 
@@ -74,6 +81,12 @@ router.post('/tambah-staff-pukal', tambahStaffBulk);
 // RESIT PEMBAYARAN
 // ------------------------------------------
 router.get('/sejarah-bayaran', getAllResitBayaran);
+
+// Resit Biro Angkasa (berasingan dari FPX)
+router.post('/resit-biro-angkasa/jana',       janaResitBiroAngkasa);
+router.get('/resit-biro-angkasa',             senaraiResitBiroAdmin);
+router.get('/resit-biro-angkasa/statistik',   statistikResitBiro);
+router.get('/resit-biro-angkasa/:no_resit',   detailResitBiro);
 
 // ------------------------------------------
 // KEBAJIKAN & BERHENTI

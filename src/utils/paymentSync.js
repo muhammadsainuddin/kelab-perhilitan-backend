@@ -1,6 +1,7 @@
 import db from '../config/db.js';
 import { janaNoAhliBaru } from './keahlianHelper.js';
 import { semakTransaksiBil } from './toyyibpay.js';
+import { janaNoResitManual } from '../controllers/resitController.js';
 
 // ============================================================
 // Modul pusat pemprosesan bayaran ToyyibPay.
@@ -26,6 +27,10 @@ export const prosesYuranBerjaya = async (billcode) => {
     }
 
     await db.query('UPDATE sejarah_bayaran SET status = "BERJAYA" WHERE billCode = ?', [billcode]);
+
+    try { await janaNoResitManual(billcode); } catch (e) {
+        console.error('[RESIT] Gagal jana no_resit manual:', e.message);
+    }
 
     try {
         await db.query(`
