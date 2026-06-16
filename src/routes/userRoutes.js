@@ -7,7 +7,8 @@ import {
     changePassword,
     updateGambarProfil,
     getSenaraiPTJ,
-    hubungiKelab
+    hubungiKelab,
+    senaraiAJK
 } from '../controllers/userController.js';
 
 import {
@@ -53,6 +54,7 @@ router.get('/senarai-ptj', getSenaraiPTJ);
 
 // hubungiKelab: Ahli hantar pertanyaan / permohonan bantuan melalui emel
 router.post('/hubungi-kelab', hubungiKelab);
+router.get('/senarai-ajk',   senaraiAJK);
 
 // ==========================================
 // KEMPEN SUMBANGAN

@@ -288,3 +288,25 @@ export const hubungiKelab = async (req, res) => {
         res.status(500).json({ success: false, message: 'Gagal menghantar mesej. Sila cuba lagi.' });
     }
 };
+
+// Senarai AJK — untuk paparan ahli (hanya data awam sahaja)
+export const senaraiAJK = async (req, res) => {
+    const hierarki = ['Yang Dipertua','Naib Yang Dipertua','Setiausaha','Penolong Setiausaha','Bendahari','Penolong Bendahari','Auditor','Ahli Jawatankuasa','Ahli Jawatankuasa Negeri'];
+    try {
+        const placeholders = hierarki.map(() => '?').join(',');
+        const [rows] = await db.query(
+            `SELECT u.nama_pegawai, u.jawatan_kelab, u.phone AS no_tel, u.emel AS email,
+                    u.gambar, p.nama_penempatan AS penempatan
+             FROM users u
+             LEFT JOIN penempatan p ON u.penempatan_id = p.id
+             WHERE u.jawatan_kelab IN (${placeholders})
+               AND u.status_ahli = 'aktif'
+             ORDER BY FIELD(u.jawatan_kelab, ${placeholders})`,
+            [...hierarki, ...hierarki]
+        );
+        res.json({ success: true, data: rows });
+    } catch (error) {
+        console.error('Ralat senaraiAJK:', error);
+        res.status(500).json({ success: false, message: 'Gagal memuatkan senarai AJK.' });
+    }
+};
