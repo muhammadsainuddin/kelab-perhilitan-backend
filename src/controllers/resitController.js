@@ -9,12 +9,11 @@ import db from '../config/db.js';
 const janaNoResit = async (prefix, yyyymm) => {
     const header = `${prefix}-${yyyymm}-`;
     const jadual = prefix === 'BA' ? 'resit_biro_angkasa' : 'sejarah_bayaran';
-    const [[row]] = await db.query(
-        `SELECT COALESCE(MAX(CAST(SUBSTRING(no_resit, ?) AS UNSIGNED)), 0) AS seq
-         FROM ${jadual} WHERE no_resit LIKE ?`,
-        [header.length + 1, `${header}%`]
+    const [[{ cnt }]] = await db.query(
+        `SELECT COUNT(*) AS cnt FROM ${jadual} WHERE no_resit LIKE ?`,
+        [`${header}%`]
     );
-    return `${header}${String(row.seq + 1).padStart(5, '0')}`;
+    return `${header}${String(Number(cnt) + 1).padStart(5, '0')}`;
 };
 
 const yyyymmDariBulan = (bulanStr) => bulanStr.replace('-', '');  // '2026-06' → '202606'
@@ -26,57 +25,90 @@ const yyyymmDariBulan = (bulanStr) => bulanStr.replace('-', '');  // '2026-06' �
 // ─────────────────────────────────────────────────────────────
 export const janaResitBiroAngkasa = async (req, res) => {
     const dijana_oleh = req.user.no_kp;
-    const bulan = req.body.bulan || new Date().toISOString().slice(0, 7);  // 'YYYY-MM'
+    const bulan = req.body.bulan || new Date().toISOString().slice(0, 7);
 
     if (!/^\d{4}-\d{2}$/.test(bulan))
         return res.status(400).json({ success: false, message: 'Format bulan tidak sah. Gunakan YYYY-MM.' });
 
-    const bulanDate = `${bulan}-01`;
-    const yyyymm = yyyymmDariBulan(bulan);
+    const bulanDate   = `${bulan}-01`;
+    const tarikhResit = `${bulan}-10`;
+    const header      = `BA-${yyyymmDariBulan(bulan)}-`;
 
     try {
-        // Semua ahli Biro Angkasa aktif yang mula potongan ≤ bulan dipilih
+        // Ambil ahli layak yang BELUM ada resit bulan ini — 1 query dengan LEFT JOIN
         const [ahliList] = await db.query(`
             SELECT u.no_kp, u.no_ahli, u.nama_pegawai, u.yuran_kelab_bulanan
             FROM users u
+            LEFT JOIN resit_biro_angkasa r
+                ON r.no_kp = u.no_kp AND r.bulan_potongan = ?
             WHERE u.jenis_potongan = 'Potongan Biro angkasa'
               AND u.status_ahli = 'aktif'
               AND u.tarikh_mula_potongan IS NOT NULL
               AND u.tarikh_mula_potongan <= ?
-        `, [bulanDate]);
+              AND r.id IS NULL
+        `, [bulanDate, bulanDate]);
+
+        // Kira yang sudah wujud
+        const [[{ dilangkau }]] = await db.query(
+            `SELECT COUNT(*) AS dilangkau FROM resit_biro_angkasa WHERE bulan_potongan = ?`,
+            [bulanDate]
+        );
+        const bilDilangkau = Number(dilangkau);
 
         if (ahliList.length === 0)
-            return res.json({ success: true, message: 'Tiada ahli Biro Angkasa layak untuk bulan ini.', dijana: 0, dilangkau: 0 });
+            return res.json({ success: true, message: `Semua ahli sudah ada resit untuk ${bulan}.`, dijana: 0, dilangkau: bilDilangkau });
 
-        let dijana = 0, dilangkau = 0;
+        // Urutan seterusnya
+        const [[{ cnt }]] = await db.query(
+            `SELECT COUNT(*) AS cnt FROM resit_biro_angkasa WHERE no_resit LIKE ?`,
+            [`${header}%`]
+        );
+        let seq = Number(cnt);
+
+        // Bina semua baris sekaligus
+        const resitRows    = [];
+        const kewanganRows = [];
 
         for (const ahli of ahliList) {
-            // Semak jika resit sudah wujud untuk bulan ini
-            const [[sedia]] = await db.query(
-                'SELECT id FROM resit_biro_angkasa WHERE no_kp = ? AND bulan_potongan = ?',
-                [ahli.no_kp, bulanDate]
-            );
-            if (sedia) { dilangkau++; continue; }
+            seq++;
+            const noResit = `${header}${String(seq).padStart(5, '0')}`;
+            const amaun   = parseFloat(ahli.yuran_kelab_bulanan) || 5.00;
 
-            const noResit = await janaNoResit('BA', yyyymm);
-            const amaun  = parseFloat(ahli.yuran_kelab_bulanan) || 5.00;
+            resitRows.push([noResit, ahli.no_kp, ahli.no_ahli || null, ahli.nama_pegawai, amaun, bulanDate, tarikhResit, dijana_oleh]);
+            kewanganRows.push(['MASUK', 'YURAN_BA', amaun, noResit,
+                `Potongan Biro Angkasa — ${bulan} — ${ahli.nama_pegawai}`,
+                ahli.no_kp, dijana_oleh, tarikhResit]);
+        }
 
-            await db.query(`
+        // Satu transaksi, dua bulk INSERT
+        const conn = await db.getConnection();
+        try {
+            await conn.beginTransaction();
+            await conn.query(`
                 INSERT INTO resit_biro_angkasa
-                    (no_resit, no_kp, no_ahli, nama_pegawai, amaun, bulan_potongan, dijana_oleh)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            `, [noResit, ahli.no_kp, ahli.no_ahli || null, ahli.nama_pegawai, amaun, bulanDate, dijana_oleh]);
-
-            dijana++;
+                    (no_resit, no_kp, no_ahli, nama_pegawai, amaun, bulan_potongan, tarikh_jana, dijana_oleh)
+                VALUES ?
+            `, [resitRows]);
+            await conn.query(`
+                INSERT INTO transaksi_kewangan
+                    (jenis_aliran, kategori, amaun, rujukan, nota, no_kp_pihak, direkod_oleh, tarikh_transaksi)
+                VALUES ?
+            `, [kewanganRows]);
+            await conn.commit();
+        } catch (txErr) {
+            await conn.rollback();
+            throw txErr;
+        } finally {
+            conn.release();
         }
 
         res.json({
             success: true,
-            message: `Resit bulan ${bulan} selesai. ${dijana} dijana, ${dilangkau} sudah wujud.`,
+            message: `Resit bulan ${bulan} selesai. ${ahliList.length} dijana, ${bilDilangkau} sudah wujud.`,
             bulan,
-            dijana,
-            dilangkau,
-            jumlah_ahli: ahliList.length
+            dijana: ahliList.length,
+            dilangkau: bilDilangkau,
+            jumlah_ahli: ahliList.length + bilDilangkau,
         });
     } catch (err) {
         console.error('[RESIT BA] Jana gagal:', err);
@@ -114,7 +146,8 @@ export const senaraiResitBiroAdmin = async (req, res) => {
 
         const [rows] = await db.query(`
             SELECT r.id, r.no_resit, r.no_kp, r.no_ahli, r.nama_pegawai,
-                   r.amaun, r.bulan_potongan, r.tarikh_jana, r.dijana_oleh,
+                   r.amaun, DATE_FORMAT(r.bulan_potongan, '%Y-%m-%d') AS bulan_potongan,
+                   DATE_FORMAT(r.tarikh_jana, '%Y-%m-%d') AS tarikh_jana, r.dijana_oleh,
                    p.nama_penempatan AS penempatan
             FROM resit_biro_angkasa r
             LEFT JOIN users u ON r.no_kp = u.no_kp
@@ -168,7 +201,9 @@ export const resitSayaBiroAngkasa = async (req, res) => {
     const no_kp = req.user.no_kp;
     try {
         const [rows] = await db.query(`
-            SELECT no_resit, amaun, bulan_potongan, tarikh_jana
+            SELECT no_resit, amaun,
+                   DATE_FORMAT(bulan_potongan, '%Y-%m-%d') AS bulan_potongan,
+                   DATE_FORMAT(tarikh_jana, '%Y-%m-%d') AS tarikh_jana
             FROM resit_biro_angkasa
             WHERE no_kp = ?
             ORDER BY bulan_potongan DESC

@@ -98,18 +98,19 @@ export const uploadGambar = (field, max) => (req, res, next) => {
 // untuk jimat ruang server. Dijalankan SELEPAS multer, SEBELUM controller.
 // ──────────────────────────────────────────────────────────────
 export const mampatGambar = async (req, res, next) => {
-    if (!req.files || req.files.length === 0) return next();
+    const files = req.files?.length ? req.files : (req.file ? [req.file] : []);
+    if (!files.length) return next();
     try {
-        for (const f of req.files) {
+        for (const f of files) {
             if (!f.mimetype || !f.mimetype.startsWith('image/') || f.mimetype === 'image/gif') continue;
             const dir = path.dirname(f.path);
-            const namaBaru = path.basename(f.filename, path.extname(f.filename)) + '.jpg';
+            const namaBaru = path.basename(f.filename, path.extname(f.filename)) + '.webp';
             const laluanBaru = path.join(dir, namaBaru);
 
             const buffer = await sharp(f.path)
-                .rotate() // hormati orientasi EXIF
+                .rotate()
                 .resize({ width: 1280, height: 1280, fit: 'inside', withoutEnlargement: true })
-                .jpeg({ quality: 75, mozjpeg: true })
+                .webp({ quality: 82, effort: 4 })
                 .toBuffer();
 
             await fs.promises.writeFile(laluanBaru, buffer);
@@ -117,12 +118,12 @@ export const mampatGambar = async (req, res, next) => {
 
             f.filename = namaBaru;
             f.path = laluanBaru;
-            f.mimetype = 'image/jpeg';
+            f.mimetype = 'image/webp';
             f.size = buffer.length;
         }
         next();
     } catch (e) {
         console.error('[UPLOAD] mampatGambar:', e.message);
-        next(); // jangan blok proses; guna fail asal jika mampatan gagal
+        next();
     }
 };

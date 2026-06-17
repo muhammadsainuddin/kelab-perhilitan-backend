@@ -33,8 +33,8 @@ export const getProfilAhliLengkap = async (req, res) => {
             SELECT 
                 u.no_kp, u.nama_pegawai, u.gred_penyandang_sspa AS gred_sspa, 
                 p.nama_penempatan AS penempatan, u.penempatan_id,
-                u.emel AS email, u.phone, u.saiz_baju, u.jenis_potongan, 
-                u.yuran_kelab_bulanan, u.no_akaun_bank, u.nama_bank,
+                u.emel AS email, u.phone, u.saiz_baju, u.jenis_potongan,
+                u.kod_majikan, u.yuran_kelab_bulanan, u.no_akaun_bank, u.nama_bank,
                 u.nama_waris, u.no_phone_waris, u.akaun_bank_waris,
                 u.nama_bank_waris, u.status_ahli, u.no_ahli,
                 u.gambar, u.role

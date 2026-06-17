@@ -10,7 +10,7 @@
 -- LANGKAH 1: Jadual resit Biro Angkasa
 CREATE TABLE IF NOT EXISTS resit_biro_angkasa (
     id              INT AUTO_INCREMENT PRIMARY KEY,
-    no_resit        VARCHAR(20)     NOT NULL UNIQUE
+    no_resit        VARCHAR(25)     NOT NULL UNIQUE
                     COMMENT 'Format: BA-YYYYMM-NNNNN',
     no_kp           VARCHAR(20)     NOT NULL,
     no_ahli         VARCHAR(20)     NULL,
@@ -24,7 +24,7 @@ CREATE TABLE IF NOT EXISTS resit_biro_angkasa (
     INDEX idx_no_kp (no_kp),
     INDEX idx_bulan (bulan_potongan),
     UNIQUE KEY uniq_ahli_bulan (no_kp, bulan_potongan)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
   COMMENT='Resit potongan yuran melalui Biro Angkasa (berasingan dari FPX)';
 
 -- LANGKAH 2: Tambah no_resit ke sejarah_bayaran (bayaran manual / FPX)

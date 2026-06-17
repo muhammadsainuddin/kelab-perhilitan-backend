@@ -94,8 +94,25 @@ app.use(cors(corsOptions));
 app.use(express.json());
 app.use(requestLogger);
 
-// Sajikan folder statik
-app.use(express.static(path.join(__dirname, 'public')));
+// Uploads: nama fail unik (timestamp) — selamat cache 1 tahun
+app.use('/uploads', express.static(path.join(__dirname, 'public/uploads'), {
+    maxAge: '365d',
+    immutable: true,
+    etag: false,
+    lastModified: false,
+}));
+
+// Fail statik lain
+app.use(express.static(path.join(__dirname, 'public'), {
+    maxAge: '1d',
+    etag: true,
+    lastModified: true,
+    setHeaders(res, filePath) {
+        if (filePath.endsWith('.html')) {
+            res.setHeader('Content-Type', 'text/html; charset=UTF-8');
+        }
+    },
+}));
 
 // Hadkan percubaan pada laluan auth untuk elak brute-force (login/register/forgot/reset)
 const authLimiter = rateLimit({
