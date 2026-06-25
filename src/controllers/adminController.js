@@ -2,6 +2,8 @@ import db from '../config/db.js';
 import bcrypt from 'bcryptjs';
 import { janaNoAhliBaru } from '../utils/keahlianHelper.js';
 import { semakStatusBerbayar } from '../utils/keahlianHelper.js';
+import sendEmail from '../utils/sendEmail.js';
+import { KELAB, footerEmelHTML } from '../config/kelab.js';
 
 // Auto-migrate: tambah kolum catatan_admin ke berhenti_ahli jika belum ada
 (async () => {
@@ -864,5 +866,176 @@ export const hapusPenempatan = async (req, res) => {
         res.json({ success: true, message: "Penempatan berjaya dipadam." });
     } catch (error) {
         res.status(500).json({ success: false, message: "Gagal memadam penempatan." });
+    }
+};
+
+// =====================================================================
+// PERMOHONAN DAFTAR BAHARU (Staff tanpa rekod daftar sendiri)
+// =====================================================================
+export const senaraiPermohonanDaftar = async (req, res) => {
+    try {
+        const [rows] = await db.query(`
+            SELECT u.no_kp, u.nama_pegawai, u.gred_penyandang_sspa AS gred,
+                p.nama_penempatan AS penempatan, u.emel, u.phone,
+                u.tarikh_lapor_diri, u.status_ahli
+            FROM users u
+            LEFT JOIN penempatan p ON u.penempatan_id = p.id
+            WHERE u.status_ahli = 'menunggu_kelulusan'
+            ORDER BY u.tarikh_lapor_diri ASC
+        `);
+        res.status(200).json({ success: true, data: rows });
+    } catch (e) {
+        res.status(500).json({ success: false, message: 'Gagal menarik senarai permohonan.' });
+    }
+};
+
+export const kemaskiniPermohonanDaftar = async (req, res) => {
+    const { no_kp } = req.params;
+    const { tindakan } = req.body; // 'LULUS' | 'TOLAK'
+
+    if (!['LULUS', 'TOLAK'].includes(tindakan)) {
+        return res.status(400).json({ success: false, message: 'Tindakan tidak sah.' });
+    }
+
+    try {
+        const [sedia] = await db.query(
+            'SELECT nama_pegawai, emel, gred_penyandang_sspa FROM users WHERE no_kp = ? AND status_ahli = "menunggu_kelulusan"',
+            [no_kp]
+        );
+        if (sedia.length === 0) {
+            return res.status(404).json({ success: false, message: 'Permohonan tidak dijumpai.' });
+        }
+        const pemohon = sedia[0];
+
+        if (tindakan === 'LULUS') {
+            // Terus aktif — password sudah ada sejak daftar
+            await db.query('UPDATE users SET status_ahli = "aktif" WHERE no_kp = ? AND status_ahli = "menunggu_kelulusan"', [no_kp]);
+
+            if (pemohon.emel) {
+                const urlLogin = `${process.env.FRONTEND_URL || 'https://kelabperhilitan.my'}/#/login`;
+                try {
+                    await sendEmail({
+                        email: pemohon.emel,
+                        subject: `[Kelab PERHILITAN] Tahniah! Permohonan Anda Telah Diluluskan`,
+                        message: `
+<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;border:1px solid #e2e8f0;border-radius:10px;overflow:hidden;">
+
+  <div style="background:#0F4C3A;padding:28px 24px;text-align:center;">
+    <p style="color:#95D5B2;font-size:10px;font-weight:bold;text-transform:uppercase;letter-spacing:2px;margin:0 0 6px;">Kelab Sukan &amp; Kebajikan</p>
+    <h1 style="color:#fff;font-size:20px;font-weight:bold;margin:0;">KELAB PERHILITAN</h1>
+    <p style="color:rgba(255,255,255,0.5);font-size:10px;margin:5px 0 0;">No. Pendaftaran: ${KELAB.noPertubuhan}</p>
+  </div>
+
+  <div style="background:#1B4332;padding:10px 24px;text-align:center;">
+    <p style="color:#52B788;font-size:12px;font-weight:bold;text-transform:uppercase;letter-spacing:1.5px;margin:0;">
+      ✅ Permohonan Keahlian Diluluskan
+    </p>
+  </div>
+
+  <div style="padding:28px;background:#fff;color:#1e293b;line-height:1.75;font-size:13px;">
+    <p style="margin:0 0 14px;">Tahniah <strong>${pemohon.nama_pegawai}</strong>,</p>
+    <p style="margin:0 0 20px;">Permohonan keahlian anda telah <strong style="color:#0F4C3A;">DILULUSKAN</strong>. Akaun anda kini <strong>aktif</strong> dan anda boleh log masuk serta-merta menggunakan maklumat yang didaftarkan.</p>
+
+    <!-- Maklumat Log Masuk -->
+    <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:18px 20px;margin-bottom:22px;">
+      <p style="font-size:12px;font-weight:bold;text-transform:uppercase;letter-spacing:1px;color:#0F4C3A;margin:0 0 12px;">Maklumat Log Masuk Anda</p>
+      <table style="width:100%;border-collapse:collapse;font-size:12px;">
+        <tr>
+          <td style="padding:5px 0;color:#64748b;font-weight:bold;width:40%;">E-mel</td>
+          <td style="padding:5px 0;color:#0f172a;">${pemohon.emel}</td>
+        </tr>
+        <tr>
+          <td style="padding:5px 0;color:#64748b;font-weight:bold;">Kata Laluan</td>
+          <td style="padding:5px 0;color:#0f172a;">
+            <em style="color:#64748b;">(kata laluan yang anda tetapkan semasa mendaftar)</em>
+          </td>
+        </tr>
+      </table>
+    </div>
+
+    <!-- Langkah Seterusnya -->
+    <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:18px 20px;margin-bottom:22px;">
+      <p style="font-size:12px;font-weight:bold;text-transform:uppercase;letter-spacing:1px;color:#334155;margin:0 0 12px;">Langkah Seterusnya</p>
+      <table style="width:100%;border-collapse:collapse;">
+        <tr style="vertical-align:top;">
+          <td style="width:28px;padding:0 10px 12px 0;">
+            <div style="width:22px;height:22px;background:#0F4C3A;color:#fff;border-radius:50%;font-size:11px;font-weight:bold;text-align:center;line-height:22px;">1</div>
+          </td>
+          <td style="padding-bottom:12px;font-size:12px;color:#334155;">
+            Log masuk di: <a href="${urlLogin}" style="color:#0F4C3A;font-weight:bold;">${urlLogin}</a>
+          </td>
+        </tr>
+        <tr style="vertical-align:top;">
+          <td style="width:28px;padding:0 10px 12px 0;">
+            <div style="width:22px;height:22px;background:#0F4C3A;color:#fff;border-radius:50%;font-size:11px;font-weight:bold;text-align:center;line-height:22px;">2</div>
+          </td>
+          <td style="padding-bottom:12px;font-size:12px;color:#334155;">
+            Pergi ke bahagian <strong>Yuran</strong> dan selesaikan bayaran yuran tahunan melalui FPX.
+          </td>
+        </tr>
+        <tr style="vertical-align:top;">
+          <td style="width:28px;padding:0 10px 0 0;">
+            <div style="width:22px;height:22px;background:#0F4C3A;color:#fff;border-radius:50%;font-size:11px;font-weight:bold;text-align:center;line-height:22px;">3</div>
+          </td>
+          <td style="font-size:12px;color:#334155;">
+            Nombor ahli akan diberikan secara automatik selepas bayaran yuran berjaya.
+          </td>
+        </tr>
+      </table>
+    </div>
+
+    <!-- Butang CTA -->
+    <div style="text-align:center;margin:24px 0;">
+      <a href="${urlLogin}"
+        style="background:#0F4C3A;color:#fff;padding:13px 36px;text-decoration:none;border-radius:8px;font-weight:bold;font-size:13px;display:inline-block;letter-spacing:0.3px;">
+        Log Masuk Sekarang
+      </a>
+    </div>
+
+    <div style="background:#fffbeb;border-left:3px solid #f59e0b;padding:12px 16px;border-radius:0 6px 6px 0;">
+      <p style="margin:0;font-size:12px;color:#78350f;">
+        Jika anda terlupa kata laluan, gunakan fungsi <strong>"Lupa Kata Laluan"</strong> di halaman log masuk.
+      </p>
+    </div>
+  </div>
+
+  ${footerEmelHTML()}
+</div>`
+                    });
+                } catch (e) { /* senyap */ }
+            }
+
+            return res.status(200).json({ success: true, message: 'Permohonan diluluskan. Staff boleh terus log masuk.' });
+        }
+
+        if (tindakan === 'TOLAK') {
+            // Padam rekod — tiada password, tiada transaksi, selamat dipadam
+            await db.query('DELETE FROM users WHERE no_kp = ? AND status_ahli = "menunggu_kelulusan" AND password IS NULL', [no_kp]);
+
+            if (pemohon.emel) {
+                try {
+                    await sendEmail({
+                        email: pemohon.emel,
+                        subject: `[Kelab PERHILITAN] Makluman Permohonan Keahlian`,
+                        message: `
+<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;border:1px solid #e2e8f0;border-radius:10px;overflow:hidden;">
+  <div style="background:#7F1D1D;padding:24px;text-align:center;">
+    <h2 style="color:#fff;margin:0;font-size:18px;">Makluman Permohonan</h2>
+    <p style="color:#fca5a5;font-size:11px;margin:4px 0 0;">Kelab PERHILITAN</p>
+  </div>
+  <div style="padding:24px;background:#fff;color:#1e293b;font-size:13px;line-height:1.7;">
+    <p>Kepada <strong>${pemohon.nama_pegawai}</strong>,</p>
+    <p>Maaf untuk memaklumkan bahawa permohonan keahlian anda tidak dapat diluluskan pada masa ini. Sila hubungi pentadbir kelab untuk maklumat lanjut.</p>
+  </div>
+  ${footerEmelHTML()}
+</div>`
+                    });
+                } catch (e) { /* senyap */ }
+            }
+
+            return res.status(200).json({ success: true, message: 'Permohonan ditolak dan rekod dipadamkan.' });
+        }
+    } catch (e) {
+        res.status(500).json({ success: false, message: 'Ralat pangkalan data.' });
     }
 };

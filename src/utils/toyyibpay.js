@@ -55,6 +55,11 @@ export const janaBilFPX = async ({
         `;
     }
 
+    // Tarikh luput bil — 15 minit dari sekarang dalam zon waktu Malaysia (UTC+8)
+    const pad = n => String(n).padStart(2, '0');
+    const myt = new Date(Date.now() + 15 * 60 * 1000 + 8 * 60 * 60 * 1000);
+    const billExpiryDate = `${pad(myt.getUTCDate())}-${pad(myt.getUTCMonth() + 1)}-${myt.getUTCFullYear()} ${pad(myt.getUTCHours())}:${pad(myt.getUTCMinutes())}:${pad(myt.getUTCSeconds())}`;
+
     // ── Sediakan Data ToyyibPay ──
     const formData = new URLSearchParams({
         userSecretKey: SECRET_KEY,
@@ -72,7 +77,8 @@ export const janaBilFPX = async ({
         billPhone: user.phone || '0123456789',
         billSplitPayment: 0,
         billPaymentChannel: 0,
-        billChargeToCustomer: 1
+        billChargeToCustomer: 1,
+        billExpiryDate: billExpiryDate
     });
 
     if (contentEmail) {

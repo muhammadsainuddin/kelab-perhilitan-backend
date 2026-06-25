@@ -12,7 +12,7 @@ import { janaNoResitManual } from '../controllers/resitController.js';
 // ── Proses YURAN berjaya: beri no ahli (jika perlu), kemaskini status, rekod buku tunai ──
 export const prosesYuranBerjaya = async (billcode) => {
     const [bayaran] = await db.query('SELECT no_kp, status, amaun, keterangan FROM sejarah_bayaran WHERE billCode = ?', [billcode]);
-    if (bayaran.length === 0 || bayaran[0].status === 'BERJAYA') return; // elak proses dua kali
+    if (bayaran.length === 0 || bayaran[0].status !== 'PENDING') return; // hanya proses bil PENDING — elak proses berganda
 
     const { no_kp, amaun, keterangan } = bayaran[0];
     const [ahli] = await db.query('SELECT no_ahli FROM users WHERE no_kp = ?', [no_kp]);

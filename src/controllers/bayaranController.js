@@ -23,11 +23,14 @@ export const ciptaBil = async (req, res) => {
         if (pendingBills.length > 0) {
             const pending = pendingBills[0];
             if (pending.minit_berlalu < 15) {
-                return res.status(400).json({ 
-                    success: false, 
-                    message: `Anda mempunyai transaksi yang sedang diproses di bank. Sila tunggu sebentar atau semak sejarah transaksi anda.` 
+                return res.status(400).json({
+                    success: false,
+                    message: `Anda mempunyai transaksi yang sedang diproses di bank. Sila tunggu sebentar atau semak sejarah transaksi anda.`,
+                    minit_berlalu: pending.minit_berlalu
                 });
             }
+            // Bil lama dah > 15 minit — tandakan GAGAL sebelum cipta bil baharu
+            await db.query('UPDATE sejarah_bayaran SET status = "GAGAL" WHERE no_kp = ? AND status = "PENDING"', [no_kp]);
         }
 
         const [users] = await db.query(`SELECT nama_pegawai, emel, phone, gred_penyandang_sspa, yuran_kelab_bulanan FROM users WHERE no_kp = ?`, [no_kp]);
@@ -115,7 +118,9 @@ export const getSejarahYuran = async (req, res) => {
         // Nota: penyegerakan status PENDING kini dibuat secara berkala oleh utils/paymentSync.js
         // (lihat setInterval di server.js) supaya GET ini sentiasa pantas dan tidak menunggu API luar.
         const [rows] = await db.query(`
-            SELECT billCode, amaun, status, keterangan, DATE_FORMAT(tarikh_cipta, '%d-%m-%Y %h:%i %p') AS tarikh
+            SELECT billCode, amaun, status, keterangan,
+                DATE_FORMAT(tarikh_cipta, '%d-%m-%Y %h:%i %p') AS tarikh,
+                tarikh_cipta
             FROM sejarah_bayaran WHERE no_kp = ? ORDER BY tarikh_cipta DESC
         `, [no_kp]);
         res.status(200).json({ success: true, data: rows });

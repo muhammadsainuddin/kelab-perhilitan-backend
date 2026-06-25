@@ -24,7 +24,9 @@ import {
     senaraiPenempatan,
     tambahPenempatan,
     kemaskiniPenempatan,
-    hapusPenempatan
+    hapusPenempatan,
+    senaraiPermohonanDaftar,
+    kemaskiniPermohonanDaftar
 } from '../controllers/adminController.js';
 
 import {
@@ -119,6 +121,12 @@ router.delete('/sumbangan/kempen/:id/gambar/:gid',  hapusGambarKempen);
 
 
 router.get('/profil-ahli/:no_kp', verifyToken, requireRole(['Admin', 'Super Admin']), getProfilAhliLengkap);
+
+// ------------------------------------------
+// PERMOHONAN DAFTAR BAHARU
+// ------------------------------------------
+router.get('/permohonan-daftar',        senaraiPermohonanDaftar);
+router.put('/permohonan-daftar/:no_kp', kemaskiniPermohonanDaftar);
 
 // ------------------------------------------
 // PENGURUSAN PENEMPATAN (PTJ)

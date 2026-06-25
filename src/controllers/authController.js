@@ -7,6 +7,135 @@ import { messages, getLang } from '../utils/lang.js';
 import { KELAB, footerEmelHTML } from '../config/kelab.js';
 
 // ==========================================
+// 0A. Senarai Penempatan & Gred (Awam — untuk borang daftar baharu)
+// ==========================================
+export const senaraiGredAwam = async (req, res) => {
+    try {
+        const [rows] = await db.query(`
+            SELECT DISTINCT gred_penyandang_sspa AS gred
+            FROM users
+            WHERE gred_penyandang_sspa IS NOT NULL AND gred_penyandang_sspa != ''
+            ORDER BY gred_penyandang_sspa ASC
+        `);
+        res.status(200).json({ success: true, data: rows.map(r => r.gred) });
+    } catch (e) {
+        res.status(500).json({ success: false, data: [] });
+    }
+};
+
+export const senaraiPenempatanAwam = async (req, res) => {
+    try {
+        const [rows] = await db.query('SELECT id, nama_penempatan FROM penempatan ORDER BY nama_penempatan ASC');
+        res.status(200).json({ success: true, data: rows });
+    } catch (e) {
+        res.status(500).json({ success: false, data: [] });
+    }
+};
+
+// ==========================================
+// 0B. Permohonan Daftar Baharu (Staff Tanpa Rekod)
+// ==========================================
+export const daftarBaru = async (req, res) => {
+    const { nama_penuh, no_kp, gred, penempatan_id, tarikh_lapor_diri, emel, password, no_tel } = req.body;
+
+    if (!nama_penuh || !no_kp || !gred || !penempatan_id || !tarikh_lapor_diri || !emel || !password) {
+        return res.status(400).json({ message: 'Semua maklumat bertanda wajib diisi.' });
+    }
+
+    const icClean = String(no_kp).replace(/-/g, '').trim();
+    if (!/^\d{12}$/.test(icClean)) {
+        return res.status(400).json({ message: 'No. Kad Pengenalan mestilah 12 digit tanpa sengkang.' });
+    }
+
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(emel)) {
+        return res.status(400).json({ message: 'Format e-mel tidak sah.' });
+    }
+
+    if (String(password).length < 8) {
+        return res.status(400).json({ message: 'Kata laluan mestilah sekurang-kurangnya 8 aksara.' });
+    }
+
+    try {
+        // Auto-migrate: tambah column tarikh_lapor_diri jika belum ada
+        const [cols] = await db.query(`
+            SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
+            WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'users' AND COLUMN_NAME = 'tarikh_lapor_diri'
+        `);
+        if (cols.length === 0) {
+            await db.query(`ALTER TABLE users ADD COLUMN tarikh_lapor_diri DATE NULL AFTER phone`);
+        }
+
+        // Auto-migrate: pastikan status_ahli boleh terima nilai 'menunggu_kelulusan'
+        const [enumRow] = await db.query(`
+            SELECT COLUMN_TYPE FROM INFORMATION_SCHEMA.COLUMNS
+            WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'users' AND COLUMN_NAME = 'status_ahli'
+        `);
+        if (enumRow.length > 0 && !enumRow[0].COLUMN_TYPE.includes('menunggu_kelulusan')) {
+            await db.query(`ALTER TABLE users MODIFY COLUMN status_ahli VARCHAR(30) NOT NULL DEFAULT 'tidak aktif'`);
+        }
+
+        // Semak IC sudah wujud
+        const [sedia] = await db.query('SELECT no_kp, status_ahli, password FROM users WHERE no_kp = ?', [icClean]);
+        if (sedia.length > 0) {
+            const u = sedia[0];
+            if (u.password !== null) {
+                return res.status(400).json({ message: 'No. Kad Pengenalan ini sudah mempunyai akaun aktif. Sila log masuk.' });
+            }
+            if (u.status_ahli === 'menunggu_kelulusan') {
+                return res.status(400).json({ message: 'Permohonan dengan No. KP ini sedang dalam semakan. Sila tunggu makluman pentadbir.' });
+            }
+        }
+
+        // Semak emel unik
+        const [existEmail] = await db.query('SELECT id FROM users WHERE emel = ?', [emel]);
+        if (existEmail.length > 0) {
+            return res.status(400).json({ message: 'E-mel ini sudah digunakan oleh pengguna lain.' });
+        }
+
+        const salt = await bcrypt.genSalt(10);
+        const hashedPassword = await bcrypt.hash(password, salt);
+
+        await db.query(`
+            INSERT INTO users (no_kp, nama_pegawai, gred_penyandang_sspa, penempatan_id, tarikh_lapor_diri, emel, phone, password, status_ahli, role, jenis_potongan)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'menunggu_kelulusan', 'Ahli', 'Bayar secara manual')
+        `, [icClean, nama_penuh.trim().toUpperCase(), gred, penempatan_id, tarikh_lapor_diri, emel, no_tel || null, hashedPassword]);
+
+        // Hantar notifikasi ke admin
+        try {
+            await sendEmail({
+                email: KELAB.emel,
+                subject: `[Kelab PERHILITAN] Permohonan Daftar Baharu — ${nama_penuh.trim().toUpperCase()}`,
+                message: `
+<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;border:1px solid #e2e8f0;border-radius:10px;overflow:hidden;">
+  <div style="background:#0F4C3A;padding:24px;text-align:center;">
+    <h2 style="color:#fff;margin:0;font-size:18px;">Permohonan Daftar Baharu</h2>
+    <p style="color:#95D5B2;font-size:11px;margin:4px 0 0;">Kelab PERHILITAN — Sistem Pengurusan Ahli</p>
+  </div>
+  <div style="padding:24px;background:#fff;color:#1e293b;font-size:13px;line-height:1.7;">
+    <p>Terdapat permohonan keahlian baharu yang memerlukan kelulusan anda:</p>
+    <table style="width:100%;border-collapse:collapse;font-size:12px;margin-top:12px;">
+      <tr style="border-bottom:1px solid #f1f5f9;"><td style="padding:8px 0;color:#64748b;font-weight:bold;width:40%;">Nama</td><td style="padding:8px 0;">${nama_penuh.trim().toUpperCase()}</td></tr>
+      <tr style="border-bottom:1px solid #f1f5f9;"><td style="padding:8px 0;color:#64748b;font-weight:bold;">No. Kad Pengenalan</td><td style="padding:8px 0;font-family:monospace;">${icClean}</td></tr>
+      <tr style="border-bottom:1px solid #f1f5f9;"><td style="padding:8px 0;color:#64748b;font-weight:bold;">Gred</td><td style="padding:8px 0;">${gred}</td></tr>
+      <tr style="border-bottom:1px solid #f1f5f9;"><td style="padding:8px 0;color:#64748b;font-weight:bold;">Tarikh Lapor Diri</td><td style="padding:8px 0;">${new Date(tarikh_lapor_diri).toLocaleDateString('ms-MY', { dateStyle: 'long' })}</td></tr>
+      <tr><td style="padding:8px 0;color:#64748b;font-weight:bold;">E-mel</td><td style="padding:8px 0;">${emel || '—'}</td></tr>
+    </table>
+    <p style="margin-top:18px;font-size:12px;color:#64748b;">Sila log masuk ke panel pentadbir untuk meluluskan atau menolak permohonan ini.</p>
+  </div>
+  ${footerEmelHTML()}
+</div>`
+            });
+        } catch (e) { /* emel gagal tidak henti proses */ }
+
+        res.status(201).json({ message: 'Permohonan berjaya dihantar. Sila tunggu kelulusan pentadbir sebelum mengaktifkan akaun anda.' });
+    } catch (error) {
+        console.error('DaftarBaru Error:', error);
+        res.status(500).json({ message: 'Ralat pelayan. Sila cuba lagi.' });
+    }
+};
+
+// ==========================================
 // 1. Pendaftaran / Pengaktifan Akaun
 // ==========================================
 export const register = async (req, res) => {
@@ -33,7 +162,12 @@ export const register = async (req, res) => {
 
         const user = users[0];
 
-        // 2. Semak jika akaun telah diaktifkan sebelum ini (ada password)
+        // 2. Semak jika masih menunggu kelulusan admin
+        if (user.status_ahli === 'menunggu_kelulusan') {
+            return res.status(403).json({ message: "Permohonan anda masih dalam semakan pentadbir. Sila tunggu kelulusan sebelum mengaktifkan akaun." });
+        }
+
+        // 3. Semak jika akaun telah diaktifkan sebelum ini (ada password)
         if (user.password !== null) {
             return res.status(400).json({ message: "Akaun untuk No. Kad Pengenalan ini telah diaktifkan. Sila log masuk." });
         }
@@ -80,11 +214,13 @@ export const login = async (req, res) => {
         const [users] = await db.query(query, [email]);
         const user = users[0];
 
-        if (!user || !(await bcrypt.compare(password, user.password))) {
+        if (!user || !user.password || !(await bcrypt.compare(password, user.password))) {
             return res.status(401).json({ message: "E-mel atau kata laluan salah." });
         }
 
-        // Semak status ahli (aktif / tidak aktif)
+        if (user.status_ahli === 'menunggu_kelulusan') {
+            return res.status(403).json({ message: "Permohonan anda masih dalam semakan. Sila tunggu kelulusan pentadbir." });
+        }
         if (user.status_ahli === 'tidak aktif') {
             return res.status(403).json({ message: "Akaun anda tidak aktif. Sila hubungi Admin." });
         }
