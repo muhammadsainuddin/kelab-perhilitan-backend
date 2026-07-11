@@ -5,6 +5,8 @@ import {
     editKebajikan,
     senaraiBerhentiAhli,
     kemaskiniBerhentiAhli,
+    kemaskiniHentiAngkasa,
+    rekodBayarSemulaAngkasa,
     senaraiSemuaAhli,
     senaraiAhliRingkas,
     kemaskiniAhli,
@@ -101,6 +103,8 @@ router.put('/kebajikan/:id', kemaskiniStatusKebajikan);
 router.put('/kebajikan/:id/edit', uploadBantuan.array('dokumen', 20), editKebajikan);
 router.get('/berhenti', senaraiBerhentiAhli);
 router.put('/berhenti/:id', kemaskiniBerhentiAhli);
+router.put('/berhenti/:id/angkasa', kemaskiniHentiAngkasa);
+router.post('/berhenti/:id/bayar-semula', rekodBayarSemulaAngkasa);
 
 // ------------------------------------------
 // STATISTIK & DIREKTORI

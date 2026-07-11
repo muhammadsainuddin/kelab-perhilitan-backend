@@ -11,12 +11,19 @@ import { KELAB, footerEmelHTML, ccPengurusan } from '../config/kelab.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Auto-migrate: tambah kolum catatan_admin ke berhenti_ahli jika belum ada
+// Auto-migrate: tambah kolum ke berhenti_ahli jika belum ada
 (async () => {
-    try {
-        await db.query(`ALTER TABLE berhenti_ahli ADD COLUMN catatan_admin TEXT NULL`);
-    } catch (e) {
-        if (e.code !== 'ER_DUP_FIELDNAME') console.error('[migrate] berhenti_ahli.catatan_admin:', e.message);
+    const migrasi = [
+        { col: 'catatan_admin',             sql: `ALTER TABLE berhenti_ahli ADD COLUMN catatan_admin TEXT NULL` },
+        { col: 'tarikh_berhenti',           sql: `ALTER TABLE berhenti_ahli ADD COLUMN tarikh_berhenti DATE NULL` },
+        { col: 'tarikh_henti_angkasa',      sql: `ALTER TABLE berhenti_ahli ADD COLUMN tarikh_henti_angkasa DATE NULL` },
+        { col: 'jumlah_lebih_potong',       sql: `ALTER TABLE berhenti_ahli ADD COLUMN jumlah_lebih_potong DECIMAL(10,2) NULL` },
+        { col: 'bil_bulan_lebih',           sql: `ALTER TABLE berhenti_ahli ADD COLUMN bil_bulan_lebih INT NULL` },
+        { col: 'id_transaksi_bayar_semula', sql: `ALTER TABLE berhenti_ahli ADD COLUMN id_transaksi_bayar_semula INT NULL` },
+    ];
+    for (const m of migrasi) {
+        try { await db.query(m.sql); }
+        catch (e) { if (e.code !== 'ER_DUP_FIELDNAME') console.error(`[migrate] berhenti_ahli.${m.col}:`, e.message); }
     }
 })();
 
@@ -254,17 +261,21 @@ export const editKebajikan = async (req, res) => {
 // ==========================================
 export const senaraiBerhentiAhli = async (req, res) => {
     try {
-        const query = `
+        const [senarai] = await db.query(`
             SELECT
                 b.id, b.no_kp, u.nama_pegawai, u.no_ahli, u.gred_penyandang_sspa AS gred,
                 p.nama_penempatan AS penempatan,
-                b.sebab_berhenti, b.catatan_admin, b.status_permohonan, b.tarikh_mohon
+                b.sebab_berhenti, b.catatan_admin, b.status_permohonan, b.tarikh_mohon,
+                b.tarikh_berhenti, b.tarikh_henti_angkasa,
+                b.jumlah_lebih_potong, b.bil_bulan_lebih, b.id_transaksi_bayar_semula,
+                u.jenis_potongan, u.yuran_kelab_bulanan,
+                t.rujukan AS no_rujukan_bayar_semula
             FROM berhenti_ahli b
             JOIN users u ON b.no_kp = u.no_kp
             LEFT JOIN penempatan p ON u.penempatan_id = p.id
+            LEFT JOIN transaksi_kewangan t ON t.id = b.id_transaksi_bayar_semula
             ORDER BY b.tarikh_mohon DESC
-        `;
-        const [senarai] = await db.query(query);
+        `);
         res.status(200).json({ success: true, data: senarai });
     } catch (error) {
         console.error("Ralat Senarai Berhenti:", error);
@@ -274,12 +285,12 @@ export const senaraiBerhentiAhli = async (req, res) => {
 
 export const kemaskiniBerhentiAhli = async (req, res) => {
     const { id } = req.params;
-    const { no_kp, status_permohonan, catatan_admin } = req.body;
+    const { no_kp, status_permohonan, catatan_admin, tarikh_berhenti } = req.body;
 
     try {
         await db.query(
-            `UPDATE berhenti_ahli SET status_permohonan = ?, catatan_admin = ? WHERE id = ?`,
-            [status_permohonan, catatan_admin || null, id]
+            `UPDATE berhenti_ahli SET status_permohonan = ?, catatan_admin = ?, tarikh_berhenti = ? WHERE id = ?`,
+            [status_permohonan, catatan_admin || null, tarikh_berhenti || null, id]
         );
 
         if (status_permohonan === 'LULUS') {
@@ -291,6 +302,126 @@ export const kemaskiniBerhentiAhli = async (req, res) => {
         res.status(200).json({ success: true, message: `Permohonan berhenti telah ${status_permohonan}.` });
     } catch (error) {
         res.status(500).json({ success: false, message: "Ralat pelayan." });
+    }
+};
+
+// ==========================================
+// 2b. HENTI ANGKASA — KIRA LEBIH POTONG
+//     PUT /api/admin/berhenti/:id/angkasa
+//     Body: { tarikh_henti_angkasa }
+// ==========================================
+export const kemaskiniHentiAngkasa = async (req, res) => {
+    const { id } = req.params;
+    const { tarikh_henti_angkasa } = req.body;
+
+    if (!tarikh_henti_angkasa) {
+        return res.status(400).json({ success: false, message: 'Tarikh henti angkasa wajib diisi.' });
+    }
+
+    try {
+        const [[rekod]] = await db.query(
+            `SELECT b.no_kp, b.tarikh_berhenti, u.yuran_kelab_bulanan
+             FROM berhenti_ahli b
+             JOIN users u ON u.no_kp = b.no_kp
+             WHERE b.id = ? AND b.status_permohonan = 'LULUS'`,
+            [id]
+        );
+        if (!rekod) return res.status(404).json({ success: false, message: 'Rekod tidak dijumpai atau belum diluluskan.' });
+        if (!rekod.tarikh_berhenti) return res.status(400).json({ success: false, message: 'Tarikh berhenti belum ditetapkan. Sila lulus permohonan terlebih dahulu.' });
+
+        // Kira bulan potong angkasa SELEPAS bulan berhenti
+        const tarikhBerhentiMonth = new Date(rekod.tarikh_berhenti);
+        tarikhBerhentiMonth.setDate(1);
+
+        const [resitLebih] = await db.query(`
+            SELECT COUNT(*) AS bil, COALESCE(SUM(amaun), 0) AS jumlah
+            FROM resit_biro_angkasa
+            WHERE no_kp = ?
+              AND bulan_potongan > ?
+              AND bulan_potongan <= ?
+        `, [rekod.no_kp, tarikhBerhentiMonth, tarikh_henti_angkasa]);
+
+        let bil   = parseInt(resitLebih[0].bil);
+        let jumlah = parseFloat(resitLebih[0].jumlah);
+
+        // Jika tiada resit dijana lagi, anggaran berdasarkan bilangan bulan × yuran
+        if (bil === 0) {
+            const mula = new Date(tarikhBerhentiMonth);
+            mula.setMonth(mula.getMonth() + 1);
+            const henti  = new Date(tarikh_henti_angkasa);
+            henti.setDate(1);
+            bil = (henti.getFullYear() - mula.getFullYear()) * 12 + (henti.getMonth() - mula.getMonth()) + 1;
+            bil = Math.max(0, bil);
+            jumlah = parseFloat((bil * parseFloat(rekod.yuran_kelab_bulanan || 0)).toFixed(2));
+        }
+
+        await db.query(
+            `UPDATE berhenti_ahli
+             SET tarikh_henti_angkasa = ?, bil_bulan_lebih = ?, jumlah_lebih_potong = ?
+             WHERE id = ?`,
+            [tarikh_henti_angkasa, bil, jumlah, id]
+        );
+
+        return res.json({
+            success: true,
+            message: `${bil} bulan lebih potong dikira. Jumlah: RM ${jumlah.toFixed(2)}`,
+            bil_bulan_lebih: bil,
+            jumlah_lebih_potong: jumlah,
+        });
+    } catch (e) {
+        console.error('[BERHENTI] kemaskiniHentiAngkasa:', e.message);
+        return res.status(500).json({ success: false, message: 'Ralat pelayan.' });
+    }
+};
+
+// ==========================================
+// 2c. BAYAR SEMULA ANGKASA — REKOD TRANSAKSI
+//     POST /api/admin/berhenti/:id/bayar-semula
+//     Body: { tarikh?, nota? }
+// ==========================================
+export const rekodBayarSemulaAngkasa = async (req, res) => {
+    const { id } = req.params;
+    const no_kp_admin = req.user.no_kp;
+    const { tarikh, nota } = req.body;
+
+    try {
+        const [[rekod]] = await db.query(
+            `SELECT b.no_kp, b.jumlah_lebih_potong, b.id_transaksi_bayar_semula, b.tarikh_berhenti,
+                    u.nama_pegawai
+             FROM berhenti_ahli b
+             JOIN users u ON u.no_kp = b.no_kp
+             WHERE b.id = ? AND b.status_permohonan = 'LULUS'`,
+            [id]
+        );
+        if (!rekod) return res.status(404).json({ success: false, message: 'Rekod tidak dijumpai.' });
+        if (rekod.id_transaksi_bayar_semula) return res.status(400).json({ success: false, message: 'Pembayaran semula sudah pernah direkodkan.' });
+        if (!rekod.jumlah_lebih_potong || parseFloat(rekod.jumlah_lebih_potong) <= 0) {
+            return res.status(400).json({ success: false, message: 'Jumlah lebih potong belum dikira. Sila tetapkan tarikh henti angkasa terlebih dahulu.' });
+        }
+
+        const amaun   = parseFloat(rekod.jumlah_lebih_potong);
+        const rujukan = `BAYAR-SEMULA-ANGKASA-${rekod.no_kp}`;
+        const notaTx  = nota || `Pembayaran semula potongan Angkasa kepada ${rekod.nama_pegawai} (berhenti ${rekod.tarikh_berhenti ? new Date(rekod.tarikh_berhenti).toLocaleDateString('ms-MY') : '—'}).`;
+
+        const [trResult] = await db.query(`
+            INSERT INTO transaksi_kewangan
+                (jenis_aliran, kategori, amaun, rujukan, nota, penerima_bayaran, direkod_oleh, tarikh_transaksi)
+            VALUES ('KELUAR', 'KEBAJIKAN', ?, ?, ?, ?, ?, ?)
+        `, [amaun, rujukan, notaTx, rekod.nama_pegawai, no_kp_admin, tarikh ? new Date(tarikh) : new Date()]);
+
+        await db.query(
+            `UPDATE berhenti_ahli SET id_transaksi_bayar_semula = ? WHERE id = ?`,
+            [trResult.insertId, id]
+        );
+
+        return res.status(201).json({
+            success: true,
+            message: `Pembayaran semula RM ${amaun.toFixed(2)} berjaya direkodkan ke ledjer.`,
+            id_transaksi: trResult.insertId,
+        });
+    } catch (e) {
+        console.error('[BERHENTI] rekodBayarSemulaAngkasa:', e.message);
+        return res.status(500).json({ success: false, message: 'Ralat pelayan.' });
     }
 };
 
