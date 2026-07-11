@@ -4,7 +4,10 @@ import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
 import sendEmail from '../utils/sendEmail.js';
 import { messages, getLang } from '../utils/lang.js';
-import { KELAB, footerEmelHTML } from '../config/kelab.js';
+import { KELAB, footerEmelHTML, ccPengurusan } from '../config/kelab.js';
+import { bacaStatusMaintenance } from '../middleware/maintenanceMiddleware.js';
+
+const PERANAN_ADMIN = ['Admin', 'Super Admin'];
 
 // ==========================================
 // 0A. Senarai Penempatan & Gred (Awam — untuk borang daftar baharu)
@@ -105,6 +108,7 @@ export const daftarBaru = async (req, res) => {
         try {
             await sendEmail({
                 email: KELAB.emel,
+                cc: ccPengurusan(),
                 subject: `[Kelab PERHILITAN] Permohonan Daftar Baharu — ${nama_penuh.trim().toUpperCase()}`,
                 message: `
 <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;border:1px solid #e2e8f0;border-radius:10px;overflow:hidden;">
@@ -223,6 +227,14 @@ export const login = async (req, res) => {
         }
         if (user.status_ahli === 'tidak aktif') {
             return res.status(403).json({ message: "Akaun anda tidak aktif. Sila hubungi Admin." });
+        }
+
+        // Sekat log masuk bukan-admin semasa penyelenggaraan
+        if (!PERANAN_ADMIN.includes(user.role) && await bacaStatusMaintenance()) {
+            return res.status(503).json({
+                maintenance: true,
+                message: 'Sistem sedang dalam penyelenggaraan. Hanya pentadbir boleh log masuk.'
+            });
         }
 
         const token = jwt.sign({ id: user.id, role: user.role, no_kp: user.no_kp }, process.env.JWT_SECRET, { expiresIn: '1d' });

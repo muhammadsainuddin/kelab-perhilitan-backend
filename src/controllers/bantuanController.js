@@ -1,5 +1,25 @@
 import db from '../config/db.js';
 
+// ── Migration: kolum waris dalam bantuan_kebajikan ───────────────────
+(async () => {
+    const kolumBaru = [
+        "ADD COLUMN IF NOT EXISTS bagi_pihak TINYINT(1) NOT NULL DEFAULT 0",
+        "ADD COLUMN IF NOT EXISTS pemohon_admin_no_kp VARCHAR(20) DEFAULT NULL",
+        "ADD COLUMN IF NOT EXISTS nama_waris VARCHAR(200) DEFAULT NULL",
+        "ADD COLUMN IF NOT EXISTS no_kp_waris VARCHAR(20) DEFAULT NULL",
+        "ADD COLUMN IF NOT EXISTS hubungan_waris VARCHAR(100) DEFAULT NULL",
+        "ADD COLUMN IF NOT EXISTS no_akaun_waris VARCHAR(50) DEFAULT NULL",
+        "ADD COLUMN IF NOT EXISTS nama_bank_waris VARCHAR(100) DEFAULT NULL",
+    ];
+    for (const kolum of kolumBaru) {
+        try {
+            await db.query(`ALTER TABLE bantuan_kebajikan ${kolum}`);
+        } catch (e) {
+            if (e.code !== 'ER_DUP_FIELDNAME') console.error('[Migration] bantuan_kebajikan waris:', e.message);
+        }
+    }
+})();
+
 // ── Migration: jadual kadar_bantuan ──────────────────────────────────
 (async () => {
     try {
@@ -147,5 +167,62 @@ export const sejarahBantuan = async (req, res) => {
     } catch (error) {
         console.error("Ralat Sejarah Bantuan:", error);
         res.status(500).json({ success: false, message: "Ralat memuatkan sejarah permohonan." });
+    }
+};
+
+// ==========================================
+// Admin: Mohon Bantuan Bagi Pihak Waris (Si Mati)
+// ==========================================
+export const mohonBantuanBagiPihak = async (req, res) => {
+    const pemohon_admin_no_kp = req.user.no_kp;
+    const {
+        no_kp_simati,
+        jenis_bantuan,
+        keterangan,
+        nama_waris,
+        no_kp_waris,
+        hubungan_waris,
+        no_akaun_waris,
+        nama_bank_waris,
+    } = req.body;
+
+    if (!no_kp_simati || !jenis_bantuan || !nama_waris || !no_akaun_waris || !nama_bank_waris || !hubungan_waris) {
+        return res.status(400).json({
+            success: false,
+            message: 'Medan wajib: no_kp_simati, jenis_bantuan, nama_waris, hubungan_waris, no_akaun_waris, nama_bank_waris.',
+        });
+    }
+
+    // Pastikan si mati adalah ahli berdaftar
+    const [[simati]] = await db.query('SELECT no_kp, nama_pegawai FROM users WHERE no_kp = ?', [no_kp_simati]);
+    if (!simati) {
+        return res.status(404).json({ success: false, message: 'Ahli yang dipilih tidak dijumpai dalam sistem.' });
+    }
+
+    let dokumenString = null;
+    if (req.files && req.files.length > 0) {
+        dokumenString = JSON.stringify(req.files.map(f => f.filename));
+    }
+
+    try {
+        await db.query(
+            `INSERT INTO bantuan_kebajikan
+                (no_kp, jenis_bantuan, keterangan, dokumen_sokongan,
+                 bagi_pihak, pemohon_admin_no_kp,
+                 nama_waris, no_kp_waris, hubungan_waris, no_akaun_waris, nama_bank_waris)
+             VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?)`,
+            [
+                no_kp_simati, jenis_bantuan, keterangan || null, dokumenString,
+                pemohon_admin_no_kp,
+                nama_waris, no_kp_waris || null, hubungan_waris, no_akaun_waris, nama_bank_waris,
+            ]
+        );
+        res.status(201).json({
+            success: true,
+            message: `Permohonan bagi pihak waris arwah ${simati.nama_pegawai} berjaya dihantar.`,
+        });
+    } catch (error) {
+        console.error('Ralat Mohon Bantuan Bagi Pihak:', error);
+        res.status(500).json({ success: false, message: 'Gagal menghantar permohonan.' });
     }
 };

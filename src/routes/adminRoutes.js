@@ -2,9 +2,11 @@ import express from 'express';
 import {
     senaraiKebajikan,
     kemaskiniStatusKebajikan,
+    editKebajikan,
     senaraiBerhentiAhli,
     kemaskiniBerhentiAhli,
     senaraiSemuaAhli,
+    senaraiAhliRingkas,
     kemaskiniAhli,
     kemaskiniProfilAhli,
     getBelumDaftar,
@@ -48,7 +50,7 @@ import {
 } from '../controllers/resitController.js';
 
 import { verifyToken, requireRole } from '../middleware/authMiddleware.js';
-import { upload, uploadGambar, mampatGambar } from '../middleware/uploadMiddleware.js';
+import { upload, uploadBantuan, uploadGambar, mampatGambar } from '../middleware/uploadMiddleware.js';
 
 const router = express.Router();
 
@@ -66,6 +68,7 @@ router.put('/tukar-katalaluan', tukarKatalaluan);
 // PENGURUSAN AHLI
 // ------------------------------------------
 router.get('/semua-ahli', senaraiSemuaAhli);
+router.get('/ahli-ringkas', senaraiAhliRingkas);
 router.get('/belum-daftar', getBelumDaftar);
 router.put('/kemaskini-ahli/:no_kp', kemaskiniAhli);
 router.put('/kemaskini-profil-ahli/:no_kp', kemaskiniProfilAhli);
@@ -95,6 +98,7 @@ router.get('/resit-biro-angkasa/:no_resit',   detailResitBiro);
 // ------------------------------------------
 router.get('/kebajikan', senaraiKebajikan);
 router.put('/kebajikan/:id', kemaskiniStatusKebajikan);
+router.put('/kebajikan/:id/edit', uploadBantuan.array('dokumen', 20), editKebajikan);
 router.get('/berhenti', senaraiBerhentiAhli);
 router.put('/berhenti/:id', kemaskiniBerhentiAhli);
 

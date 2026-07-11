@@ -343,7 +343,7 @@ export const senaraiNotifikasi = async (req, res) => {
     try {
         const no_kp = req.user.no_kp;
         const [rows] = await db.query(
-            `SELECT id, jenis, tajuk, mesej, dibaca, tarikh_cipta
+            `SELECT id, jenis, tajuk, mesej, dibaca, ref_id, tarikh_cipta
              FROM notifikasi WHERE no_kp = ? ORDER BY tarikh_cipta DESC LIMIT 30`,
             [no_kp]
         );

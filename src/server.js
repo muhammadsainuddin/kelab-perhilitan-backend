@@ -19,6 +19,8 @@ import acaraRoutes from './routes/acaraRoutes.js';
 import kedaiRoutes from './routes/kedaiRoutes.js';
 import kewanganRoutes from './routes/kewanganRoutes.js';
 import settingsRoutes from './routes/settingsRoutes.js';
+import sokonganRoutes from './routes/sokonganRoutes.js';
+import { maintenanceGuard, bacaStatusMaintenance } from './middleware/maintenanceMiddleware.js';
 
 
 import eventBus from './utils/eventEmitter.js';
@@ -94,7 +96,7 @@ app.use(cors(corsOptions));
 app.use(express.json());
 app.use(requestLogger);
 
-// Uploads: nama fail unik (timestamp) — selamat cache 1 tahun
+// Uploads: nama fail unik (UUID) — selamat cache 1 tahun
 app.use('/uploads', express.static(path.join(__dirname, 'public/uploads'), {
     maxAge: '365d',
     immutable: true,
@@ -123,6 +125,15 @@ const authLimiter = rateLimit({
     message: { message: "Terlalu banyak percubaan. Sila cuba lagi sebentar." }
 });
 
+// Endpoint awam — tiada auth, sentiasa tersedia
+app.get('/api/public/status', async (req, res) => {
+    const maintenance = await bacaStatusMaintenance();
+    res.json({ maintenance });
+});
+
+// Maintenance guard — blok semua request bukan-admin jika mod penyelenggaraan aktif
+app.use(maintenanceGuard);
+
 // Laluan API
 app.use('/api/auth', authLimiter, authRoutes);
 app.use('/api/ahli', memberRoutes);
@@ -135,6 +146,7 @@ app.use('/api/acara', acaraRoutes);
 app.use('/api/kedai', kedaiRoutes);
 app.use('/api/admin/kewangan', kewanganRoutes);
 app.use('/api/settings', settingsRoutes);
+app.use('/api/sokongan', sokonganRoutes);
 
 app.use(errorLogger);
 

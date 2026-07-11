@@ -1,9 +1,15 @@
 import db from '../config/db.js';
 import bcrypt from 'bcryptjs';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import { janaNoAhliBaru } from '../utils/keahlianHelper.js';
 import { semakStatusBerbayar } from '../utils/keahlianHelper.js';
 import sendEmail from '../utils/sendEmail.js';
-import { KELAB, footerEmelHTML } from '../config/kelab.js';
+import { KELAB, footerEmelHTML, ccPengurusan } from '../config/kelab.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 // Auto-migrate: tambah kolum catatan_admin ke berhenti_ahli jika belum ada
 (async () => {
@@ -84,10 +90,15 @@ export const senaraiKebajikan = async (req, res) => {
                 b.jenis_bantuan, b.keterangan, b.dokumen_sokongan,
                 b.status_permohonan, b.amaun_lulus, b.tarikh_mohon,
                 b.sebab_tolak, b.catatan_admin, b.diproses_oleh,
-                b.tarikh_dikemukakan, b.tarikh_keputusan
+                b.tarikh_dikemukakan, b.tarikh_keputusan,
+                b.bagi_pihak, b.pemohon_admin_no_kp,
+                b.nama_waris, b.no_kp_waris, b.hubungan_waris,
+                b.no_akaun_waris, b.nama_bank_waris,
+                pa.nama_pegawai AS nama_pemohon_admin
             FROM bantuan_kebajikan b
             JOIN users u ON b.no_kp = u.no_kp
             LEFT JOIN penempatan p ON u.penempatan_id = p.id
+            LEFT JOIN users pa ON b.pemohon_admin_no_kp = pa.no_kp
             ORDER BY
                 CASE
                     WHEN b.status_permohonan IS NULL OR b.status_permohonan = 'DIPROSES' THEN 0
@@ -181,6 +192,64 @@ export const kemaskiniStatusKebajikan = async (req, res) => {
 };
 
 // ==========================================
+// 1b. EDIT KANDUNGAN PERMOHONAN KEBAJIKAN
+// ==========================================
+export const editKebajikan = async (req, res) => {
+    const { id } = req.params;
+    const {
+        jenis_bantuan, keterangan, dokumen_keep,
+        nama_waris, no_kp_waris, hubungan_waris, no_akaun_waris, nama_bank_waris
+    } = req.body;
+
+    const [[rekod]] = await db.query('SELECT * FROM bantuan_kebajikan WHERE id = ?', [id]);
+    if (!rekod) return res.status(404).json({ success: false, message: 'Permohonan tidak dijumpai.' });
+    if (['LULUS', 'DITOLAK'].includes(rekod.status_permohonan)) {
+        return res.status(400).json({ success: false, message: 'Permohonan yang sudah selesai tidak boleh diedit.' });
+    }
+
+    let keepList = [];
+    try { keepList = JSON.parse(dokumen_keep || '[]'); } catch { keepList = []; }
+
+    let existingList = [];
+    try { existingList = JSON.parse(rekod.dokumen_sokongan || '[]'); } catch {
+        existingList = rekod.dokumen_sokongan ? [rekod.dokumen_sokongan] : [];
+    }
+
+    const bantuanDir = path.join(__dirname, '../public/uploads/bantuan');
+    const toDelete = existingList.filter(f => !keepList.includes(f));
+    for (const filename of toDelete) {
+        await fs.promises.unlink(path.join(bantuanDir, filename)).catch(() => {});
+    }
+
+    const newFiles = (req.files || []).map(f => f.filename);
+    const finalList = [...keepList, ...newFiles];
+    const dokumenString = finalList.length > 0 ? JSON.stringify(finalList) : null;
+
+    const fields = ['dokumen_sokongan = ?'];
+    const values = [dokumenString];
+
+    if (jenis_bantuan) { fields.push('jenis_bantuan = ?'); values.push(jenis_bantuan); }
+    if (keterangan !== undefined) { fields.push('keterangan = ?'); values.push(keterangan || null); }
+
+    if (rekod.bagi_pihak) {
+        if (nama_waris !== undefined) { fields.push('nama_waris = ?'); values.push(nama_waris || null); }
+        if (no_kp_waris !== undefined) { fields.push('no_kp_waris = ?'); values.push(no_kp_waris || null); }
+        if (hubungan_waris !== undefined) { fields.push('hubungan_waris = ?'); values.push(hubungan_waris || null); }
+        if (no_akaun_waris !== undefined) { fields.push('no_akaun_waris = ?'); values.push(no_akaun_waris || null); }
+        if (nama_bank_waris !== undefined) { fields.push('nama_bank_waris = ?'); values.push(nama_bank_waris || null); }
+    }
+
+    values.push(id);
+    try {
+        await db.query(`UPDATE bantuan_kebajikan SET ${fields.join(', ')} WHERE id = ?`, values);
+        res.json({ success: true, message: 'Permohonan berjaya dikemaskini.' });
+    } catch (e) {
+        console.error('Ralat editKebajikan:', e);
+        res.status(500).json({ success: false, message: 'Ralat pada pelayan.' });
+    }
+};
+
+// ==========================================
 // 2. PENGURUSAN PERMOHONAN BERHENTI AHLI
 // ==========================================
 export const senaraiBerhentiAhli = async (req, res) => {
@@ -259,6 +328,24 @@ export const senaraiSemuaAhli = async (req, res) => {
         res.status(200).json({ success: true, data: ahli });
     } catch (error) {
         console.error("Ralat Senarai Ahli:", error);
+        res.status(500).json({ success: false, message: "Gagal menarik senarai ahli." });
+    }
+};
+
+// Senarai ahli ringkas untuk dropdown (borang bagi pihak waris)
+export const senaraiAhliRingkas = async (req, res) => {
+    try {
+        const [ahli] = await db.query(`
+            SELECT u.no_kp, u.nama_pegawai, u.no_ahli,
+                   p.nama_penempatan AS penempatan,
+                   u.nama_waris, u.akaun_bank_waris AS no_akaun_waris, u.nama_bank_waris
+            FROM users u
+            LEFT JOIN penempatan p ON u.penempatan_id = p.id
+            ORDER BY u.nama_pegawai ASC
+        `);
+        res.status(200).json({ success: true, data: ahli });
+    } catch (error) {
+        console.error("Ralat Senarai Ahli Ringkas:", error);
         res.status(500).json({ success: false, message: "Gagal menarik senarai ahli." });
     }
 };
@@ -916,6 +1003,7 @@ export const kemaskiniPermohonanDaftar = async (req, res) => {
                 try {
                     await sendEmail({
                         email: pemohon.emel,
+                        cc: ccPengurusan(),
                         subject: `[Kelab PERHILITAN] Tahniah! Permohonan Anda Telah Diluluskan`,
                         message: `
 <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;border:1px solid #e2e8f0;border-radius:10px;overflow:hidden;">
@@ -1016,6 +1104,7 @@ export const kemaskiniPermohonanDaftar = async (req, res) => {
                 try {
                     await sendEmail({
                         email: pemohon.emel,
+                        cc: ccPengurusan(),
                         subject: `[Kelab PERHILITAN] Makluman Permohonan Keahlian`,
                         message: `
 <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;border:1px solid #e2e8f0;border-radius:10px;overflow:hidden;">

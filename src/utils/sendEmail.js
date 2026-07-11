@@ -14,15 +14,14 @@ const transporter = nodemailer.createTransport({
 });
 
 const sendEmail = async (options) => {
-    // 2. Tetapkan pilihan e-mel
     const mailOptions = {
-        from: `"${KELAB.namaPendek}" <${process.env.EMAIL_USER}>`, // Nama rasmi pertubuhan
+        from: `"${KELAB.namaPendek}" <${process.env.EMAIL_USER}>`,
         to: options.email,
         subject: options.subject,
-        html: options.message
+        html: options.message,
+        ...(options.cc ? { cc: options.cc } : {}),
     };
 
-    // 3. Hantar e-mel
     await transporter.sendMail(mailOptions);
 };
 

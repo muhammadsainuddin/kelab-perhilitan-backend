@@ -10,7 +10,13 @@ export const KELAB = {
   noPertubuhan: 'PPM-006-14-27071985',
   alamat: 'Ibu Pejabat Jabatan Perlindungan Hidupan Liar dan Taman Negara (PERHILITAN), KM.10 Jalan Cheras, 56100 Cheras Kuala Lumpur.',
   emel: 'kelabperhilitan@gmail.com',
+  emelSetiausaha: 'adha@wildlife.gov.my',
+  emelPenolongSU: 'ainihayati@wildlife.gov.my',
 };
+
+// Kembalikan senarai CC untuk emel rasmi pentadbiran
+export const ccPengurusan = () =>
+  [KELAB.emelSetiausaha, KELAB.emelPenolongSU].filter(Boolean).join(',');
 
 // Blok footer HTML untuk semua emel rasmi (resit, notifikasi, dsb.)
 export const footerEmelHTML = () => `

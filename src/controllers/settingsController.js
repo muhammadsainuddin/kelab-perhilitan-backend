@@ -1,4 +1,5 @@
 import db from '../config/db.js';
+import { invalidateMaintenanceCache } from '../middleware/maintenanceMiddleware.js';
 
 (async () => {
     try {
@@ -17,9 +18,10 @@ import db from '../config/db.js';
         }
         // Tetapan boolean (toggle modul)
         const defaults = [
-            ['modul_kedai',   1, 'Kedai Merchandise'],
-            ['modul_bantuan', 1, 'Bantuan Kebajikan'],
-            ['modul_acara',   1, 'Acara & Aktiviti'],
+            ['modul_kedai',      1, 'Kedai Merchandise'],
+            ['modul_bantuan',    1, 'Bantuan Kebajikan'],
+            ['modul_acara',      1, 'Acara & Aktiviti'],
+            ['maintenance_mode', 0, 'Mod Penyelenggaraan'],
         ];
         for (const [kunci, nilai, label] of defaults) {
             await db.query(
@@ -63,6 +65,7 @@ export const kemaskiniTetapan = async (req, res) => {
         if (result.affectedRows === 0) {
             return res.status(404).json({ ok: false, mesej: 'Tetapan tidak dijumpai' });
         }
+        if (kunci === 'maintenance_mode') invalidateMaintenanceCache();
         res.json({ ok: true, mesej: 'Tetapan berjaya dikemaskini' });
     } catch (e) {
         res.status(500).json({ ok: false, mesej: 'Ralat server' });

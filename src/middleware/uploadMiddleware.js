@@ -3,6 +3,7 @@ import path from 'path';
 import fs from 'fs';
 import sharp from 'sharp';
 import { fileURLToPath } from 'url';
+import { randomUUID } from 'crypto';
 
 // Dapatkan laluan direktori semasa (untuk ES Modules)
 const __filename = fileURLToPath(import.meta.url);
@@ -16,7 +17,8 @@ if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
 if (!fs.existsSync(path.join(uploadDir, 'images'))) fs.mkdirSync(path.join(uploadDir, 'images'));
 if (!fs.existsSync(path.join(uploadDir, 'audio'))) fs.mkdirSync(path.join(uploadDir, 'audio'));
 // TAMBAHAN BARU: Folder untuk dokumen permohonan bantuan (PDF)
-if (!fs.existsSync(path.join(uploadDir, 'bantuan'))) fs.mkdirSync(path.join(uploadDir, 'bantuan')); 
+if (!fs.existsSync(path.join(uploadDir, 'bantuan')))   fs.mkdirSync(path.join(uploadDir, 'bantuan'));
+if (!fs.existsSync(path.join(uploadDir, 'tuntutan'))) fs.mkdirSync(path.join(uploadDir, 'tuntutan'));
 
 
 // Konfigurasi storan (Di mana dan apa nama fail disimpan)
@@ -41,8 +43,7 @@ const storage = multer.diskStorage({
         else if (file.mimetype.startsWith('audio/') || file.mimetype.startsWith('video/')) prefix = 'AUD';
         else if (file.mimetype === 'application/pdf') prefix = 'DOC'; // TAMBAHAN BARU
         
-        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-        cb(null, `${prefix}-${uniqueSuffix}${path.extname(file.originalname)}`);
+        cb(null, `${prefix}-${randomUUID()}${path.extname(file.originalname).toLowerCase()}`);
     }
 });
 
@@ -74,6 +75,39 @@ export const upload = multer({
     storage: storage,
     fileFilter: fileFilter,
     limits: { fileSize: 20 * 1024 * 1024 } // Had saiz fail: 20MB kekal sama
+});
+
+// ──────────────────────────────────────────────────────────────
+// Storan khas untuk dokumen bantuan — semua fail (PDF & gambar)
+// disimpan dalam folder bantuan/ supaya URL konsisten
+// ──────────────────────────────────────────────────────────────
+const storageBantuan = multer.diskStorage({
+    destination: (req, file, cb) => {
+        cb(null, path.join(uploadDir, 'bantuan'));
+    },
+    filename: (req, file, cb) => {
+        cb(null, `DOC-${randomUUID()}${path.extname(file.originalname).toLowerCase()}`);
+    }
+});
+
+export const uploadBantuan = multer({
+    storage: storageBantuan,
+    fileFilter: fileFilter,
+    limits: { fileSize: 20 * 1024 * 1024 }
+});
+
+// ──────────────────────────────────────────────────────────────
+// Storan khas untuk dokumen tuntutan MAKSWIP (PDF & gambar)
+// ──────────────────────────────────────────────────────────────
+const storageTuntutan = multer.diskStorage({
+    destination: (req, file, cb) => cb(null, path.join(uploadDir, 'tuntutan')),
+    filename:    (req, file, cb) => cb(null, `TUN-${randomUUID()}${path.extname(file.originalname).toLowerCase()}`),
+});
+
+export const uploadTuntutan = multer({
+    storage: storageTuntutan,
+    fileFilter: fileFilter,
+    limits: { fileSize: 20 * 1024 * 1024 }
 });
 
 // ──────────────────────────────────────────────────────────────
