@@ -19,6 +19,7 @@ if (!fs.existsSync(path.join(uploadDir, 'audio'))) fs.mkdirSync(path.join(upload
 // TAMBAHAN BARU: Folder untuk dokumen permohonan bantuan (PDF)
 if (!fs.existsSync(path.join(uploadDir, 'bantuan')))   fs.mkdirSync(path.join(uploadDir, 'bantuan'));
 if (!fs.existsSync(path.join(uploadDir, 'tuntutan'))) fs.mkdirSync(path.join(uploadDir, 'tuntutan'));
+if (!fs.existsSync(path.join(uploadDir, 'kewangan'))) fs.mkdirSync(path.join(uploadDir, 'kewangan'));
 
 
 // Konfigurasi storan (Di mana dan apa nama fail disimpan)
@@ -106,6 +107,20 @@ const storageTuntutan = multer.diskStorage({
 
 export const uploadTuntutan = multer({
     storage: storageTuntutan,
+    fileFilter: fileFilter,
+    limits: { fileSize: 20 * 1024 * 1024 }
+});
+
+// ──────────────────────────────────────────────────────────────
+// Storan untuk dokumen sokongan rekod kewangan (gambar + PDF)
+// ──────────────────────────────────────────────────────────────
+const storageKewangan = multer.diskStorage({
+    destination: (req, file, cb) => cb(null, path.join(uploadDir, 'kewangan')),
+    filename:    (req, file, cb) => cb(null, `KEW-${randomUUID()}${path.extname(file.originalname).toLowerCase()}`),
+});
+
+export const uploadKewangan = multer({
+    storage: storageKewangan,
     fileFilter: fileFilter,
     limits: { fileSize: 20 * 1024 * 1024 }
 });

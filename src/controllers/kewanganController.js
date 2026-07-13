@@ -1,4 +1,8 @@
 import db from '../config/db.js';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // ── Migration: jadual sumbangan luar + tuntutan MAKSWIP ───────────────────────
 (async () => {
@@ -140,6 +144,47 @@ import db from '../config/db.js';
             console.log('[Migration] v4c: lajur fail_dokumen ditambah ke tuntutan_makswip.');
         }
 
+        // Migrasi v5: tambah nilai 'ACARA_KHAS' ke ENUM kategori dalam transaksi_kewangan
+        const [[colKategori]] = await db.query(`
+            SELECT COLUMN_TYPE FROM INFORMATION_SCHEMA.COLUMNS
+            WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'transaksi_kewangan'
+            AND COLUMN_NAME = 'kategori'
+        `);
+        if (colKategori && !colKategori.COLUMN_TYPE.includes('ACARA_KHAS')) {
+            await db.query(`
+                ALTER TABLE transaksi_kewangan
+                MODIFY COLUMN kategori ENUM(
+                    'YURAN','KEDAI','KEBAJIKAN','SUMBANGAN','OPERASI',
+                    'BELIAN_BARANG','PERKHIDMATAN','ACARA','ACARA_KHAS','LAIN-LAIN'
+                ) NULL
+            `);
+            console.log('[Migration] v5: ACARA_KHAS ditambah ke ENUM kategori transaksi_kewangan.');
+        }
+
+        // Migrasi v6: tambah fail_dokumen ke transaksi_kewangan
+        const [[colFailDokKew]] = await db.query(`
+            SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
+            WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'transaksi_kewangan'
+            AND COLUMN_NAME = 'fail_dokumen'
+        `);
+        if (!colFailDokKew) {
+            await db.query(`ALTER TABLE transaksi_kewangan ADD COLUMN fail_dokumen JSON NULL DEFAULT NULL`);
+            console.log('[Migration] v6: lajur fail_dokumen ditambah ke transaksi_kewangan.');
+        }
+
+        // Migrasi v7: jadual audit log edit transaksi
+        await db.query(`
+            CREATE TABLE IF NOT EXISTS log_edit_transaksi (
+                id           INT AUTO_INCREMENT PRIMARY KEY,
+                transaksi_id INT NOT NULL,
+                diedit_oleh  VARCHAR(20) NULL,
+                tarikh_edit  DATETIME DEFAULT CURRENT_TIMESTAMP,
+                sebelum      JSON NULL,
+                selepas      JSON NULL,
+                INDEX idx_log_transaksi (transaksi_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        `);
+
         // Migrasi satu-kali: pindahkan SUMBANGAN dari transaksi_kewangan ke kutipan_sumbangan_luar
         const [[sudahMigrasi]] = await db.query(
             `SELECT kunci FROM _migrasi WHERE kunci = 'v1_sumbangan_ke_luar'`
@@ -274,13 +319,18 @@ export const getSenaraiTransaksi = async (req, res) => {
             SELECT
                 t.id, t.jenis_aliran, t.kategori, t.amaun,
                 t.rujukan, t.nota, t.penerima_bayaran, t.acara_khas_id,
+                t.fail_dokumen, t.direkod_oleh,
                 a.nama AS nama_acara_khas,
                 u.nama_pegawai AS nama_ahli,
+                dr.nama_pegawai AS nama_direkod_oleh,
                 DATE_FORMAT(t.tarikh_transaksi, '%d-%m-%Y %H:%i') AS tarikh
             FROM transaksi_kewangan t
             LEFT JOIN users u
                 ON CONVERT(t.no_kp_pihak USING utf8mb4) COLLATE utf8mb4_unicode_ci
                  = CONVERT(u.no_kp USING utf8mb4) COLLATE utf8mb4_unicode_ci
+            LEFT JOIN users dr
+                ON CONVERT(t.direkod_oleh USING utf8mb4) COLLATE utf8mb4_unicode_ci
+                 = CONVERT(dr.no_kp USING utf8mb4) COLLATE utf8mb4_unicode_ci
             LEFT JOIN acara_khas a ON t.acara_khas_id = a.id
             ${where}
             ORDER BY t.tarikh_transaksi DESC
@@ -409,12 +459,15 @@ export const getSenaraiSumbangan = async (req, res) => {
                    DATE_FORMAT(k.tarikh, '%d-%m-%Y') AS tarikh, k.nota, k.id_tuntutan,
                    k.acara_khas_id, a.nama AS nama_acara_khas,
                    k.pakej_id, p.nama AS nama_pakej,
-                   k.pic_no_kp, u.nama_pegawai AS nama_pic
+                   k.pic_no_kp, u.nama_pegawai AS nama_pic,
+                   k.direkod_oleh, dr.nama_pegawai AS nama_direkod_oleh
             FROM kutipan_sumbangan_luar k
             LEFT JOIN acara_khas a ON k.acara_khas_id = a.id
             LEFT JOIN pakej_sumbangan p ON k.pakej_id = p.id
             LEFT JOIN users u ON CONVERT(k.pic_no_kp USING utf8mb4) COLLATE utf8mb4_unicode_ci
                                = CONVERT(u.no_kp USING utf8mb4) COLLATE utf8mb4_unicode_ci
+            LEFT JOIN users dr ON CONVERT(k.direkod_oleh USING utf8mb4) COLLATE utf8mb4_unicode_ci
+                                = CONVERT(dr.no_kp USING utf8mb4) COLLATE utf8mb4_unicode_ci
             ORDER BY k.tarikh DESC, k.id DESC
         `);
 
@@ -436,9 +489,12 @@ export const getSenaraiSumbangan = async (req, res) => {
             SELECT t.id, t.nama_acara, t.jumlah_kasar, t.potongan, t.jumlah_bersih,
                    DATE_FORMAT(t.tarikh_tuntutan, '%d-%m-%Y') AS tarikh_tuntutan,
                    t.nota, t.fail_dokumen, t.tarikh_rekod, t.acara_khas_id,
-                   a.nama AS nama_acara_khas
+                   a.nama AS nama_acara_khas,
+                   t.direkod_oleh, dr.nama_pegawai AS nama_direkod_oleh
             FROM tuntutan_makswip t
             LEFT JOIN acara_khas a ON a.id = t.acara_khas_id
+            LEFT JOIN users dr ON CONVERT(t.direkod_oleh USING utf8mb4) COLLATE utf8mb4_unicode_ci
+                                = CONVERT(dr.no_kp USING utf8mb4) COLLATE utf8mb4_unicode_ci
             ORDER BY t.tarikh_tuntutan DESC, t.id DESC
         `);
 
@@ -830,17 +886,21 @@ export const rekodTransaksi = async (req, res) => {
         : (jenis === 'MASUK' ? (penerima_bayaran || null) : null);
     const acaraId   = acara_khas_id ? parseInt(acara_khas_id) : null;
 
+    const failDokumen = req.files?.length
+        ? JSON.stringify(req.files.map(f => `/uploads/kewangan/${f.filename}`))
+        : null;
+
     try {
         await db.query(`
             INSERT INTO transaksi_kewangan
-                (jenis_aliran, kategori, amaun, rujukan, nota, no_kp_pihak, penerima_bayaran, direkod_oleh, tarikh_transaksi, acara_khas_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (jenis_aliran, kategori, amaun, rujukan, nota, no_kp_pihak, penerima_bayaran, direkod_oleh, tarikh_transaksi, acara_khas_id, fail_dokumen)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `, [
             jenis, kategori, parseFloat(amaun),
             rujukan || null, nota || null,
             kpPihak, namaPihak, no_kp_admin,
             tarikh ? new Date(tarikh) : new Date(),
-            acaraId,
+            acaraId, failDokumen,
         ]);
         return res.status(201).json({
             success: true,
@@ -858,7 +918,7 @@ export const rekodTransaksi = async (req, res) => {
 // ==========================================
 export const kemaskiniTransaksi = async (req, res) => {
     const { id } = req.params;
-    const { jenis_aliran, kategori, amaun, nota, rujukan, penerima_bayaran, tarikh } = req.body;
+    const { jenis_aliran, kategori, amaun, nota, rujukan, penerima_bayaran, tarikh, fail_padam } = req.body;
 
     if (!['MASUK', 'KELUAR'].includes(jenis_aliran)) {
         return res.status(400).json({ success: false, message: 'Jenis aliran tidak sah.' });
@@ -868,22 +928,71 @@ export const kemaskiniTransaksi = async (req, res) => {
     }
 
     try {
+        // Ambil state sedia ada (untuk log perubahan + fail_dokumen)
+        const [[rekod]] = await db.query(`
+            SELECT jenis_aliran, kategori, amaun, nota, rujukan, penerima_bayaran,
+                   DATE_FORMAT(tarikh_transaksi, '%Y-%m-%d') AS tarikh_asal, fail_dokumen
+            FROM transaksi_kewangan WHERE id = ?
+        `, [id]);
+        if (!rekod) return res.status(404).json({ success: false, message: 'Rekod tidak dijumpai.' });
+
+        let failSediaAda = [];
+        try { failSediaAda = JSON.parse(rekod.fail_dokumen || '[]'); } catch { failSediaAda = []; }
+
+        // Padam fail yang diminta
+        const senaraiFailPadam = fail_padam ? JSON.parse(fail_padam) : [];
+        for (const failPath of senaraiFailPadam) {
+            const fullPath = path.join(__dirname, '../public', failPath);
+            fs.unlink(fullPath, () => {});
+        }
+        const failKekal = failSediaAda.filter(f => !senaraiFailPadam.includes(f));
+
+        // Tambah fail baru
+        const failBaru = (req.files || []).map(f => `/uploads/kewangan/${f.filename}`);
+        const failAkhir = [...failKekal, ...failBaru];
+        const failDokumenJson = failAkhir.length ? JSON.stringify(failAkhir) : null;
+
         const [result] = await db.query(`
             UPDATE transaksi_kewangan
             SET jenis_aliran = ?, kategori = ?, amaun = ?,
                 nota = ?, rujukan = ?, penerima_bayaran = ?,
-                tarikh_transaksi = ?
+                tarikh_transaksi = ?, fail_dokumen = ?
             WHERE id = ?
         `, [
             jenis_aliran, kategori, parseFloat(amaun),
             nota || null, rujukan || null, penerima_bayaran || null,
             tarikh ? new Date(tarikh) : new Date(),
-            id
+            failDokumenJson, id
         ]);
 
         if (result.affectedRows === 0) {
             return res.status(404).json({ success: false, message: 'Rekod tidak dijumpai.' });
         }
+
+        // Log perubahan — simpan sebelum & selepas
+        const sebelum = {
+            jenis_aliran:     rekod.jenis_aliran,
+            kategori:         rekod.kategori,
+            amaun:            parseFloat(rekod.amaun),
+            nota:             rekod.nota || null,
+            rujukan:          rekod.rujukan || null,
+            penerima_bayaran: rekod.penerima_bayaran || null,
+            tarikh:           rekod.tarikh_asal,
+        };
+        const selepas = {
+            jenis_aliran:     jenis_aliran,
+            kategori:         kategori,
+            amaun:            parseFloat(amaun),
+            nota:             nota || null,
+            rujukan:          rujukan || null,
+            penerima_bayaran: penerima_bayaran || null,
+            tarikh:           tarikh || rekod.tarikh_asal,
+        };
+        await db.query(
+            `INSERT INTO log_edit_transaksi (transaksi_id, diedit_oleh, sebelum, selepas) VALUES (?, ?, ?, ?)`,
+            [id, req.user.no_kp, JSON.stringify(sebelum), JSON.stringify(selepas)]
+        );
+
         return res.status(200).json({ success: true, message: 'Rekod berjaya dikemaskini.' });
     } catch (error) {
         console.error('[KEWANGAN] kemaskiniTransaksi:', error.message);
@@ -906,6 +1015,29 @@ export const padamTransaksi = async (req, res) => {
     } catch (error) {
         console.error('[KEWANGAN] padamTransaksi:', error.message);
         return res.status(500).json({ success: false, message: 'Ralat memadam rekod.' });
+    }
+};
+
+// ==========================================
+// 14b. LOG EDIT TRANSAKSI
+//      GET /api/admin/kewangan/transaksi/:id/log
+// ==========================================
+export const getLogEditTransaksi = async (req, res) => {
+    const { id } = req.params;
+    try {
+        const [log] = await db.query(`
+            SELECT l.id, l.transaksi_id, l.tarikh_edit, l.sebelum, l.selepas,
+                   l.diedit_oleh, u.nama_pegawai AS nama_editor
+            FROM log_edit_transaksi l
+            LEFT JOIN users u ON CONVERT(l.diedit_oleh USING utf8mb4) COLLATE utf8mb4_unicode_ci
+                               = CONVERT(u.no_kp USING utf8mb4) COLLATE utf8mb4_unicode_ci
+            WHERE l.transaksi_id = ?
+            ORDER BY l.tarikh_edit DESC
+        `, [id]);
+        return res.status(200).json({ success: true, data: log });
+    } catch (error) {
+        console.error('[KEWANGAN] getLogEditTransaksi:', error.message);
+        return res.status(500).json({ success: false, message: 'Ralat mendapatkan log.' });
     }
 };
 

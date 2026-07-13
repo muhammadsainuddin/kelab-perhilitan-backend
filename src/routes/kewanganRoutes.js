@@ -7,12 +7,12 @@ import {
     getPenyataTahunan, getSenaraiSumbangan, rekodSumbangan, importSumbanganBulk,
     kemaskiniSumbangan, padamSumbangan, rekodTuntutanMakswip,
     getProdukLaris, getLaporanBulanan, getLaporanHarian, rekodTransaksi,
-    kemaskiniTransaksi, padamTransaksi,
+    kemaskiniTransaksi, padamTransaksi, getLogEditTransaksi,
     getAcaraKhas, tambahAcaraKhas, kemaskiniAcaraKhas, getPenyataAcaraKhas,
     getPakejSumbangan, tambahPakej, kemaskiniPakej, getSenaraiStaff,
 } from '../controllers/kewanganController.js';
 import { verifyToken as vT, requireRole as rR } from '../middleware/authMiddleware.js';
-import { uploadTuntutan } from '../middleware/uploadMiddleware.js';
+import { uploadTuntutan, uploadKewangan, mampatGambar } from '../middleware/uploadMiddleware.js';
 
 const routerK = expressK.Router();
 // Bendahari turut mengurus kewangan kelab (rekod perbelanjaan, sumbangan, penyata)
@@ -35,9 +35,10 @@ routerK.delete('/sumbangan/:id',       padamSumbangan);
 routerK.post('/tuntutan-makswip',      uploadTuntutan.single('fail_dokumen'), rekodTuntutanMakswip);
 
 // Rekod tunggal (masuk/keluar), laporan berkala, produk laris
-routerK.post('/rekod',            rekodTransaksi);
-routerK.put('/transaksi/:id',     kemaskiniTransaksi);
-routerK.delete('/transaksi/:id',  padamTransaksi);
+routerK.post('/rekod',            uploadKewangan.array('dokumen', 5), mampatGambar, rekodTransaksi);
+routerK.put('/transaksi/:id',      uploadKewangan.array('dokumen', 5), mampatGambar, kemaskiniTransaksi);
+routerK.delete('/transaksi/:id',   padamTransaksi);
+routerK.get('/transaksi/:id/log',  getLogEditTransaksi);
 routerK.get('/produk-laris',      getProdukLaris);
 routerK.get('/laporan-bulanan',   getLaporanBulanan);
 routerK.get('/laporan-harian',    getLaporanHarian);
