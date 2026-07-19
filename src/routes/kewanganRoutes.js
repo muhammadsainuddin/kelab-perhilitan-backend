@@ -6,10 +6,12 @@ import {
     getStatistikKewangan, getSenaraiTransaksi, rekodKeluar, eksportCSV,
     getPenyataTahunan, getSenaraiSumbangan, rekodSumbangan, importSumbanganBulk,
     kemaskiniSumbangan, padamSumbangan, rekodTuntutanMakswip,
-    getProdukLaris, getLaporanBulanan, getLaporanHarian, rekodTransaksi,
+    getProdukLaris, getLaporanBulanan, getLaporanHarian, getLaporanKategori, rekodTransaksi,
     kemaskiniTransaksi, padamTransaksi, getLogEditTransaksi,
     getAcaraKhas, tambahAcaraKhas, kemaskiniAcaraKhas, getPenyataAcaraKhas,
     getPakejSumbangan, tambahPakej, kemaskiniPakej, getSenaraiStaff,
+    getKategoriKewangan, tambahKategoriKewangan, kemaskiniKategoriKewangan,
+    padamKategoriKewangan, getLaporanPerbelanjaanAcara,
 } from '../controllers/kewanganController.js';
 import { verifyToken as vT, requireRole as rR } from '../middleware/authMiddleware.js';
 import { uploadTuntutan, uploadKewangan, mampatGambar } from '../middleware/uploadMiddleware.js';
@@ -42,6 +44,7 @@ routerK.get('/transaksi/:id/log',  getLogEditTransaksi);
 routerK.get('/produk-laris',      getProdukLaris);
 routerK.get('/laporan-bulanan',   getLaporanBulanan);
 routerK.get('/laporan-harian',    getLaporanHarian);
+routerK.get('/laporan-kategori',  getLaporanKategori);
 
 // Acara Khas (Sakom, dll.)
 routerK.get('/acara-khas',                    getAcaraKhas);
@@ -54,5 +57,14 @@ routerK.put('/pakej/:id',                     kemaskiniPakej);
 
 // Staff untuk dropdown PIC
 routerK.get('/staff',                         getSenaraiStaff);
+
+// Kategori perbelanjaan/pendapatan (custom + sistem)
+routerK.get('/kategori',                      getKategoriKewangan);
+routerK.post('/kategori',                     tambahKategoriKewangan);
+routerK.put('/kategori/:id',                  kemaskiniKategoriKewangan);
+routerK.delete('/kategori/:id',               padamKategoriKewangan);
+
+// Laporan perbelanjaan per acara khas
+routerK.get('/acara-khas/:id/laporan-perbelanjaan', getLaporanPerbelanjaanAcara);
 
 export default routerK;

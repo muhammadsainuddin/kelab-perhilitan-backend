@@ -35,7 +35,7 @@ export const prosesYuranBerjaya = async (billcode) => {
     try {
         await db.query(`
             INSERT INTO transaksi_kewangan (jenis_aliran, kategori, amaun, rujukan, nota, no_kp_pihak)
-            VALUES ('MASUK', 'YURAN', ?, ?, ?, ?)
+            VALUES ('MASUK', 'YURAN_FPX', ?, ?, ?, ?)
         `, [amaun, billcode, keterangan || 'Bayaran Yuran Kelab Tahunan', no_kp]);
     } catch (e) {
         console.error('[YURAN] Gagal rekod transaksi kewangan:', e.message);
@@ -45,7 +45,7 @@ export const prosesYuranBerjaya = async (billcode) => {
     try {
         await db.query(`
             INSERT INTO transaksi_kewangan (jenis_aliran, kategori, amaun, rujukan, nota)
-            VALUES ('KELUAR', 'OPERASI', 1.00, ?, ?)
+            VALUES ('KELUAR', 'KOS_OPERASI_FPX', 1.00, ?, ?)
         `, [billcode, `Caj ToyyibPay FPX — Yuran ${no_kp}`]);
     } catch (e) {
         console.error('[YURAN] Gagal rekod caj ToyyibPay:', e.message);
@@ -100,7 +100,7 @@ export const prosesKedaiBerjaya = async (pesananId) => {
         try {
             await conn.query(`
                 INSERT INTO transaksi_kewangan (jenis_aliran, kategori, amaun, rujukan, nota)
-                VALUES ('KELUAR', 'OPERASI', 1.00, ?, ?)
+                VALUES ('KELUAR', 'KOS_OPERASI_FPX', 1.00, ?, ?)
             `, [pesanan.billCode || `KEDAI-${pesananId}`, `Caj ToyyibPay FPX — Pesanan Kedai #${pesananId}`]);
         } catch (e) {
             console.error('[KEDAI] Gagal rekod caj ToyyibPay:', e.message);

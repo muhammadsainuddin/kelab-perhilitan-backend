@@ -223,6 +223,114 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
                 conn.release();
             }
         }
+
+        // Migrasi v8: jadual kategori_kewangan + kategori ENUM → VARCHAR
+        const [[migV8]] = await db.query(
+            `SELECT kunci FROM _migrasi WHERE kunci = 'v8_kategori_kewangan'`
+        );
+        if (!migV8) {
+            await db.query(`
+                CREATE TABLE IF NOT EXISTS kategori_kewangan (
+                    id            INT AUTO_INCREMENT PRIMARY KEY,
+                    kod           VARCHAR(50)  NOT NULL UNIQUE,
+                    nama          VARCHAR(200) NOT NULL,
+                    jenis_aliran  ENUM('MASUK','KELUAR','KEDUA') NOT NULL DEFAULT 'KEDUA',
+                    adalah_sistem TINYINT(1)   NOT NULL DEFAULT 0,
+                    aktif         TINYINT(1)   NOT NULL DEFAULT 1,
+                    urutan        INT          NOT NULL DEFAULT 0,
+                    INDEX idx_jenis (jenis_aliran),
+                    INDEX idx_aktif (aktif)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+            `);
+            // Tukar ENUM → VARCHAR supaya kategori custom boleh disimpan
+            const [[colKat]] = await db.query(`
+                SELECT COLUMN_TYPE FROM INFORMATION_SCHEMA.COLUMNS
+                WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'transaksi_kewangan'
+                AND COLUMN_NAME = 'kategori'
+            `);
+            if (colKat && String(colKat.COLUMN_TYPE).toLowerCase().startsWith('enum')) {
+                await db.query(`ALTER TABLE transaksi_kewangan MODIFY COLUMN kategori VARCHAR(50) NULL`);
+                console.log('[Migration] v8: kategori ENUM → VARCHAR(50).');
+            }
+            // Semai kategori lalai (aktif=0 untuk kod lama yang digantikan)
+            await db.query(`
+                INSERT IGNORE INTO kategori_kewangan
+                    (kod, nama, jenis_aliran, adalah_sistem, urutan, aktif) VALUES
+                ('YURAN',              'Yuran Keahlian',             'MASUK',  1, 1,  1),
+                ('KEDAI',              'Jualan Kedai / Merchandise', 'MASUK',  1, 2,  1),
+                ('ACARA',              'Bayaran Penyertaan Acara',   'MASUK',  1, 3,  1),
+                ('KEBAJIKAN',          'Bantuan Kebajikan Ahli',     'KELUAR', 1, 10, 1),
+                ('BELI_TIKET',         'Beli Tiket',                 'KELUAR', 1, 11, 1),
+                ('BELI_MAKANAN',       'Beli Makanan',               'KELUAR', 1, 12, 1),
+                ('BELI_BARANG',        'Beli Barang',                'KELUAR', 1, 13, 1),
+                ('BAYAR_PERKHIDMATAN', 'Bayar Perkhidmatan',         'KELUAR', 1, 14, 1),
+                ('OPERASI',            'Perbelanjaan Operasi',       'KELUAR', 1, 15, 1),
+                ('LAIN-LAIN',          'Lain-lain',                  'KEDUA',  1, 99, 1),
+                ('BELIAN_BARANG',      'Pembelian Barang',           'KELUAR', 1, 0,  0),
+                ('PERKHIDMATAN',       'Pembayaran Perkhidmatan',    'KELUAR', 1, 0,  0),
+                ('ACARA_KHAS',         'Acara Khas',                 'KEDUA',  1, 0,  0),
+                ('LAIN',               'Lain-lain',                  'KEDUA',  1, 0,  0)
+            `);
+            await db.query(`INSERT INTO _migrasi (kunci) VALUES ('v8_kategori_kewangan')`);
+            console.log('[Migration] v8_kategori_kewangan: jadual kategori_kewangan berjaya dicipta dan disemai.');
+        }
+
+        // Pastikan kategori sistem wujud setiap kali boot (INSERT IGNORE — selamat berulang)
+        await db.query(`
+            INSERT IGNORE INTO kategori_kewangan (kod, nama, jenis_aliran, adalah_sistem, urutan, aktif) VALUES
+            ('SUMBANGAN_AHLI',  'Sumbangan Ahli',     'MASUK',  1, 4,  1),
+            ('YURAN_FPX',       'Yuran Kelab (FPX)',  'MASUK',  1, 5,  1),
+            ('KOS_OPERASI_FPX', 'Kos Operasi (FPX)',  'KELUAR', 1, 20, 1)
+        `).catch(() => {});
+
+        // Migrasi v9: kategori KELUAR baharu (sukan/program)
+        const [[migV9]] = await db.query(`SELECT kunci FROM _migrasi WHERE kunci = 'v9_kategori_keluar'`);
+        if (!migV9) {
+            // Nyahaktifkan kategori KELUAR lama yang digantikan
+            await db.query(`
+                UPDATE kategori_kewangan SET aktif = 0
+                WHERE kod IN ('BELI_TIKET','BELI_MAKANAN','BELI_BARANG','BAYAR_PERKHIDMATAN','OPERASI')
+            `);
+            // Semai kategori baharu (INSERT IGNORE — selamat jika sudah wujud)
+            await db.query(`
+                INSERT IGNORE INTO kategori_kewangan
+                    (kod, nama, jenis_aliran, adalah_sistem, urutan, aktif) VALUES
+                ('TIKET_KAPALTERBANG', 'Tiket Kapal Terbang', 'KELUAR', 1, 11, 1),
+                ('SEWAAN_KENDERAAN',   'Sewaan Kenderaan',    'KELUAR', 1, 12, 1),
+                ('TOKEN_MAKAN',        'Token Makan',         'KELUAR', 1, 13, 1),
+                ('TOKEN_PENGANGKUTAN', 'Token Pengangkutan',  'KELUAR', 1, 14, 1),
+                ('LATIHAN_PASUKAN',    'Latihan Pasukan',     'KELUAR', 1, 15, 1),
+                ('PERALATAN_SUKAN',    'Peralatan Sukan',     'KELUAR', 1, 16, 1),
+                ('PERUBATAN',          'Perubatan',           'KELUAR', 1, 17, 1),
+                ('PENGINAPAN',         'Penginapan',          'KELUAR', 1, 18, 1),
+                ('PERCETAKAN',         'Percetakan',          'KELUAR', 1, 19, 1)
+            `);
+            await db.query(`INSERT INTO _migrasi (kunci) VALUES ('v9_kategori_keluar')`);
+            console.log('[Migration] v9_kategori_keluar: kategori KELUAR baharu berjaya disemai.');
+        }
+
+        // Migrasi v10: kategori YURAN_FPX + KOS_OPERASI_FPX, kemaskini transaksi sedia ada
+        const [[migV10]] = await db.query(`SELECT kunci FROM _migrasi WHERE kunci = 'v10_yuran_fpx'`);
+        if (!migV10) {
+            await db.query(`
+                INSERT IGNORE INTO kategori_kewangan (kod, nama, jenis_aliran, adalah_sistem, urutan, aktif) VALUES
+                ('YURAN_FPX',       'Yuran Kelab (FPX)', 'MASUK',  1, 5,  1),
+                ('KOS_OPERASI_FPX', 'Kos Operasi (FPX)', 'KELUAR', 1, 20, 1)
+            `);
+            // Tukar transaksi YURAN yang direkod secara automatik via FPX → YURAN_FPX
+            await db.query(`
+                UPDATE transaksi_kewangan SET kategori = 'YURAN_FPX'
+                WHERE jenis_aliran = 'MASUK' AND kategori = 'YURAN'
+                AND (nota LIKE '%Yuran Tahunan%' OR nota LIKE '%Bayaran Yuran%')
+            `);
+            // Tukar caj ToyyibPay FPX → KOS_OPERASI_FPX
+            await db.query(`
+                UPDATE transaksi_kewangan SET kategori = 'KOS_OPERASI_FPX'
+                WHERE jenis_aliran = 'KELUAR' AND (nota LIKE '%Caj ToyyibPay FPX%' OR nota LIKE '%Caj ToyyibPay%')
+            `);
+            await db.query(`INSERT INTO _migrasi (kunci) VALUES ('v10_yuran_fpx')`);
+            console.log('[Migration] v10_yuran_fpx: YURAN_FPX + KOS_OPERASI_FPX disemai, transaksi dikemaskini.');
+        }
     } catch (e) {
         console.error('[Migration] kewangan sumbangan:', e.message);
     }
@@ -866,6 +974,59 @@ export const getLaporanHarian = async (req, res) => {
 };
 
 // ==========================================
+// 11b. LAPORAN MENGIKUT KATEGORI
+//      GET /api/admin/kewangan/laporan-kategori?dari=&hingga=&kategori=&acara_khas_id=&jenis=
+// ==========================================
+export const getLaporanKategori = async (req, res) => {
+    const { dari, hingga, kategori, acara_khas_id, jenis } = req.query;
+    try {
+        const conds = [], params = [];
+        if (dari)          { conds.push('DATE(t.tarikh_transaksi) >= ?'); params.push(dari); }
+        if (hingga)        { conds.push('DATE(t.tarikh_transaksi) <= ?'); params.push(hingga); }
+        if (kategori)      { conds.push('t.kategori = ?');    params.push(kategori); }
+        if (acara_khas_id) { conds.push('t.acara_khas_id = ?'); params.push(parseInt(acara_khas_id)); }
+        if (jenis)         { conds.push('t.jenis_aliran = ?'); params.push(jenis); }
+        const where = conds.length ? 'WHERE ' + conds.join(' AND ') : '';
+
+        const [rows] = await db.query(`
+            SELECT
+                t.id, t.jenis_aliran, t.kategori, t.amaun, t.rujukan, t.nota, t.penerima_bayaran,
+                t.acara_khas_id, a.nama AS nama_acara_khas,
+                u.nama_pegawai AS nama_ahli,
+                DATE_FORMAT(t.tarikh_transaksi, '%d-%m-%Y') AS tarikh
+            FROM transaksi_kewangan t
+            LEFT JOIN users u
+                ON CONVERT(t.no_kp_pihak USING utf8mb4) COLLATE utf8mb4_unicode_ci
+                 = CONVERT(u.no_kp USING utf8mb4) COLLATE utf8mb4_unicode_ci
+            LEFT JOIN acara_khas a ON t.acara_khas_id = a.id
+            ${where}
+            ORDER BY t.tarikh_transaksi ASC
+        `, params);
+
+        // Pecahan per kategori
+        const byKat = {};
+        rows.forEach(r => {
+            if (!byKat[r.kategori]) byKat[r.kategori] = { masuk: 0, keluar: 0 };
+            if (r.jenis_aliran === 'MASUK') byKat[r.kategori].masuk += parseFloat(r.amaun);
+            else byKat[r.kategori].keluar += parseFloat(r.amaun);
+        });
+
+        const jlhMasuk  = rows.filter(r => r.jenis_aliran === 'MASUK').reduce((s, r) => s + parseFloat(r.amaun), 0);
+        const jlhKeluar = rows.filter(r => r.jenis_aliran === 'KELUAR').reduce((s, r) => s + parseFloat(r.amaun), 0);
+
+        return res.status(200).json({
+            success: true,
+            data: rows,
+            by_kategori: byKat,
+            ringkasan: { masuk: jlhMasuk, keluar: jlhKeluar, lebihan: jlhMasuk - jlhKeluar, bil: rows.length },
+        });
+    } catch (error) {
+        console.error('[KEWANGAN] getLaporanKategori:', error.message);
+        return res.status(500).json({ success: false, message: 'Ralat menarik laporan kategori.' });
+    }
+};
+
+// ==========================================
 // 12. REKOD TRANSAKSI MANUAL (Masuk atau Keluar)
 //     POST /api/admin/kewangan/rekod
 // ==========================================
@@ -880,10 +1041,15 @@ export const rekodTransaksi = async (req, res) => {
         return res.status(400).json({ success: false, message: 'Sila isi kategori dan amaun yang sah.' });
     }
 
-    const kpPihak   = (jenis === 'KELUAR' && kategori === 'KEBAJIKAN') ? (no_kp_pihak || null) : null;
-    const namaPihak = (jenis === 'KELUAR' && kategori !== 'KEBAJIKAN')
-        ? (penerima_bayaran || null)
-        : (jenis === 'MASUK' ? (penerima_bayaran || null) : null);
+    let kpPihak = null, namaPihak = null;
+    if (jenis === 'MASUK') {
+        // no_kp_pihak dihantar apabila pendapatan diterima daripada ahli kelab
+        if (no_kp_pihak) { kpPihak = no_kp_pihak; }
+        else { namaPihak = penerima_bayaran || null; }
+    } else if (jenis === 'KELUAR') {
+        if (kategori === 'KEBAJIKAN') { kpPihak = no_kp_pihak || null; }
+        else { namaPihak = penerima_bayaran || null; }
+    }
     const acaraId   = acara_khas_id ? parseInt(acara_khas_id) : null;
 
     const failDokumen = req.files?.length
@@ -918,7 +1084,7 @@ export const rekodTransaksi = async (req, res) => {
 // ==========================================
 export const kemaskiniTransaksi = async (req, res) => {
     const { id } = req.params;
-    const { jenis_aliran, kategori, amaun, nota, rujukan, penerima_bayaran, tarikh, fail_padam } = req.body;
+    const { jenis_aliran, kategori, amaun, nota, rujukan, penerima_bayaran, no_kp_pihak, tarikh, fail_padam, acara_khas_id } = req.body;
 
     if (!['MASUK', 'KELUAR'].includes(jenis_aliran)) {
         return res.status(400).json({ success: false, message: 'Jenis aliran tidak sah.' });
@@ -952,17 +1118,21 @@ export const kemaskiniTransaksi = async (req, res) => {
         const failAkhir = [...failKekal, ...failBaru];
         const failDokumenJson = failAkhir.length ? JSON.stringify(failAkhir) : null;
 
+        // Untuk MASUK: no_kp_pihak (ahli) mengalahkan penerima_bayaran (teks bebas)
+        const kpPihakUpdate = no_kp_pihak || null;
+        const namaPihakUpdate = kpPihakUpdate ? null : (penerima_bayaran || null);
+
         const [result] = await db.query(`
             UPDATE transaksi_kewangan
             SET jenis_aliran = ?, kategori = ?, amaun = ?,
-                nota = ?, rujukan = ?, penerima_bayaran = ?,
-                tarikh_transaksi = ?, fail_dokumen = ?
+                nota = ?, rujukan = ?, no_kp_pihak = ?, penerima_bayaran = ?,
+                tarikh_transaksi = ?, fail_dokumen = ?, acara_khas_id = ?
             WHERE id = ?
         `, [
             jenis_aliran, kategori, parseFloat(amaun),
-            nota || null, rujukan || null, penerima_bayaran || null,
+            nota || null, rujukan || null, kpPihakUpdate, namaPihakUpdate,
             tarikh ? new Date(tarikh) : new Date(),
-            failDokumenJson, id
+            failDokumenJson, acara_khas_id ? parseInt(acara_khas_id) : null, id
         ]);
 
         if (result.affectedRows === 0) {
@@ -1313,5 +1483,145 @@ export const getPenyataAcaraKhas = async (req, res) => {
     } catch (e) {
         console.error('[ACARA_KHAS] getPenyataAcaraKhas:', e.message);
         return res.status(500).json({ success: false, message: 'Ralat menjana penyata acara khas.' });
+    }
+};
+
+// ==========================================
+// KATEGORI KEWANGAN — SENARAI
+// GET /api/admin/kewangan/kategori
+// ==========================================
+export const getKategoriKewangan = async (req, res) => {
+    try {
+        const [senarai] = await db.query(`
+            SELECT id, kod, nama, jenis_aliran, adalah_sistem, aktif, urutan
+            FROM kategori_kewangan
+            ORDER BY urutan ASC, nama ASC
+        `);
+        return res.json({ success: true, data: senarai });
+    } catch (e) {
+        console.error('[KATEGORI] getKategoriKewangan:', e.message);
+        return res.status(500).json({ success: false, message: 'Ralat menarik senarai kategori.' });
+    }
+};
+
+// ==========================================
+// KATEGORI KEWANGAN — TAMBAH
+// POST /api/admin/kewangan/kategori
+// ==========================================
+export const tambahKategoriKewangan = async (req, res) => {
+    const { nama, jenis_aliran = 'KELUAR' } = req.body;
+    if (!nama?.trim()) {
+        return res.status(400).json({ success: false, message: 'Nama kategori wajib diisi.' });
+    }
+    if (!['MASUK', 'KELUAR', 'KEDUA'].includes(jenis_aliran)) {
+        return res.status(400).json({ success: false, message: 'Jenis aliran tidak sah.' });
+    }
+    const kod = nama.trim().toUpperCase().replace(/\s+/g, '_').replace(/[^A-Z0-9_\-]/g, '');
+    if (!kod) {
+        return res.status(400).json({ success: false, message: 'Nama kategori tidak menghasilkan kod yang sah.' });
+    }
+    try {
+        const [result] = await db.query(
+            `INSERT INTO kategori_kewangan (kod, nama, jenis_aliran, adalah_sistem, aktif, urutan) VALUES (?, ?, ?, 0, 1, 50)`,
+            [kod, nama.trim(), jenis_aliran]
+        );
+        return res.status(201).json({ success: true, message: 'Kategori berjaya ditambah.', id: result.insertId, kod });
+    } catch (e) {
+        if (e.code === 'ER_DUP_ENTRY') {
+            return res.status(409).json({ success: false, message: `Kod kategori '${kod}' sudah wujud.` });
+        }
+        console.error('[KATEGORI] tambahKategoriKewangan:', e.message);
+        return res.status(500).json({ success: false, message: 'Ralat menambah kategori.' });
+    }
+};
+
+// ==========================================
+// KATEGORI KEWANGAN — KEMASKINI
+// PUT /api/admin/kewangan/kategori/:id
+// ==========================================
+export const kemaskiniKategoriKewangan = async (req, res) => {
+    const { id } = req.params;
+    const { nama, aktif } = req.body;
+    const [[kat]] = await db.query('SELECT id, adalah_sistem FROM kategori_kewangan WHERE id = ?', [id]);
+    if (!kat) return res.status(404).json({ success: false, message: 'Kategori tidak dijumpai.' });
+    const fields = [];
+    const values = [];
+    if (nama !== undefined) { fields.push('nama = ?'); values.push(nama.trim()); }
+    if (aktif !== undefined) { fields.push('aktif = ?'); values.push(aktif ? 1 : 0); }
+    if (!fields.length) return res.status(400).json({ success: false, message: 'Tiada data untuk dikemaskini.' });
+    values.push(id);
+    try {
+        await db.query(`UPDATE kategori_kewangan SET ${fields.join(', ')} WHERE id = ?`, values);
+        return res.json({ success: true, message: 'Kategori berjaya dikemaskini.' });
+    } catch (e) {
+        console.error('[KATEGORI] kemaskiniKategoriKewangan:', e.message);
+        return res.status(500).json({ success: false, message: 'Ralat mengemaskini kategori.' });
+    }
+};
+
+// ==========================================
+// KATEGORI KEWANGAN — NYAHAKTIF (bukan sistem sahaja)
+// DELETE /api/admin/kewangan/kategori/:id
+// ==========================================
+export const padamKategoriKewangan = async (req, res) => {
+    const { id } = req.params;
+    const [[kat]] = await db.query('SELECT id, adalah_sistem FROM kategori_kewangan WHERE id = ?', [id]);
+    if (!kat) return res.status(404).json({ success: false, message: 'Kategori tidak dijumpai.' });
+    if (kat.adalah_sistem) {
+        return res.status(403).json({ success: false, message: 'Kategori sistem tidak boleh dipadamkan.' });
+    }
+    try {
+        await db.query('UPDATE kategori_kewangan SET aktif = 0 WHERE id = ?', [id]);
+        return res.json({ success: true, message: 'Kategori berjaya dinyahaktifkan.' });
+    } catch (e) {
+        console.error('[KATEGORI] padamKategoriKewangan:', e.message);
+        return res.status(500).json({ success: false, message: 'Ralat menyahaktifkan kategori.' });
+    }
+};
+
+// ==========================================
+// LAPORAN PERBELANJAAN PER ACARA KHAS
+// GET /api/admin/kewangan/acara-khas/:id/laporan-perbelanjaan
+// ==========================================
+export const getLaporanPerbelanjaanAcara = async (req, res) => {
+    const { id } = req.params;
+    try {
+        const [[acara]] = await db.query('SELECT id, nama, status FROM acara_khas WHERE id = ?', [id]);
+        if (!acara) return res.status(404).json({ success: false, message: 'Acara khas tidak dijumpai.' });
+
+        const [transaksi] = await db.query(`
+            SELECT
+                t.id, t.kategori, t.amaun, t.rujukan, t.nota,
+                COALESCE(u.nama_pegawai, t.penerima_bayaran) AS pihak,
+                DATE_FORMAT(t.tarikh_transaksi, '%d-%m-%Y %H:%i') AS tarikh
+            FROM transaksi_kewangan t
+            LEFT JOIN users u
+                ON CONVERT(t.no_kp_pihak USING utf8mb4) COLLATE utf8mb4_unicode_ci
+                 = CONVERT(u.no_kp USING utf8mb4) COLLATE utf8mb4_unicode_ci
+            WHERE t.acara_khas_id = ? AND t.jenis_aliran = 'KELUAR'
+            ORDER BY t.tarikh_transaksi ASC
+        `, [id]);
+
+        const [byKategori] = await db.query(`
+            SELECT k.nama AS nama_kategori, t.kategori, SUM(t.amaun) AS jumlah, COUNT(*) AS bil
+            FROM transaksi_kewangan t
+            LEFT JOIN kategori_kewangan k ON k.kod = t.kategori
+            WHERE t.acara_khas_id = ? AND t.jenis_aliran = 'KELUAR'
+            GROUP BY t.kategori
+            ORDER BY jumlah DESC
+        `, [id]);
+
+        const jumlah = transaksi.reduce((s, r) => s + parseFloat(r.amaun), 0);
+
+        return res.json({
+            success: true,
+            acara,
+            transaksi,
+            by_kategori: byKategori,
+            ringkasan: { jumlah_perbelanjaan: jumlah, bil_transaksi: transaksi.length },
+        });
+    } catch (e) {
+        console.error('[LAPORAN] getLaporanPerbelanjaanAcara:', e.message);
+        return res.status(500).json({ success: false, message: 'Ralat menjana laporan perbelanjaan acara.' });
     }
 };
