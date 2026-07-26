@@ -278,9 +278,10 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
         // Pastikan kategori sistem wujud setiap kali boot (INSERT IGNORE — selamat berulang)
         await db.query(`
             INSERT IGNORE INTO kategori_kewangan (kod, nama, jenis_aliran, adalah_sistem, urutan, aktif) VALUES
-            ('SUMBANGAN_AHLI',  'Sumbangan Ahli',     'MASUK',  1, 4,  1),
-            ('YURAN_FPX',       'Yuran Kelab (FPX)',  'MASUK',  1, 5,  1),
-            ('KOS_OPERASI_FPX', 'Kos Operasi (FPX)',  'KELUAR', 1, 20, 1)
+            ('SUMBANGAN_AHLI',   'Sumbangan Ahli',        'MASUK',  1, 4,  1),
+            ('YURAN_FPX',        'Yuran Kelab (FPX)',     'MASUK',  1, 5,  1),
+            ('KOS_OPERASI_FPX',  'Kos Operasi (FPX)',     'KELUAR', 1, 20, 1),
+            ('KUTIPAN_PENAJAAN', 'Kutipan Penajaan (Makswip)', 'MASUK', 1, 6, 1)
         `).catch(() => {});
 
         // Migrasi v9: kategori KELUAR baharu (sukan/program)
@@ -330,6 +331,17 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
             `);
             await db.query(`INSERT INTO _migrasi (kunci) VALUES ('v10_yuran_fpx')`);
             console.log('[Migration] v10_yuran_fpx: YURAN_FPX + KOS_OPERASI_FPX disemai, transaksi dikemaskini.');
+        }
+
+        // Migrasi v11: tukar SEMUA transaksi SUMBANGAN dalam acara khas → KUTIPAN_PENAJAAN
+        const [[migV11]] = await db.query(`SELECT kunci FROM _migrasi WHERE kunci = 'v11_kutipan_penajaan'`);
+        if (!migV11) {
+            await db.query(`
+                UPDATE transaksi_kewangan SET kategori = 'KUTIPAN_PENAJAAN'
+                WHERE kategori = 'SUMBANGAN' AND acara_khas_id IS NOT NULL
+            `);
+            await db.query(`INSERT INTO _migrasi (kunci) VALUES ('v11_kutipan_penajaan')`);
+            console.log('[Migration] v11_kutipan_penajaan: semua transaksi SUMBANGAN acara khas dikemaskini ke KUTIPAN_PENAJAAN.');
         }
     } catch (e) {
         console.error('[Migration] kewangan sumbangan:', e.message);
@@ -843,7 +855,7 @@ export const rekodTuntutanMakswip = async (req, res) => {
         const [trResult] = await conn.query(`
             INSERT INTO transaksi_kewangan
                 (jenis_aliran, kategori, amaun, rujukan, nota, penerima_bayaran, direkod_oleh, tarikh_transaksi, acara_khas_id)
-            VALUES ('MASUK', 'SUMBANGAN', ?, ?, ?, 'MAKSWIP', ?, ?, ?)
+            VALUES ('MASUK', 'KUTIPAN_PENAJAAN', ?, ?, ?, 'MAKSWIP', ?, ?, ?)
         `, [jumlahBersih, `TUNTUTAN-MAKSWIP-${tuntutanId}`, notaLedger, no_kp_admin, tarikh_tuntutan, acara_khas_id]);
 
         await conn.query(`UPDATE tuntutan_makswip SET id_transaksi = ? WHERE id = ?`, [trResult.insertId, tuntutanId]);
