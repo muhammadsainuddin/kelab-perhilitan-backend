@@ -94,6 +94,8 @@ export const senaraiKebajikan = async (req, res) => {
             SELECT
                 b.id, b.no_kp, u.nama_pegawai, u.no_ahli, u.gred_penyandang_sspa AS gred,
                 p.nama_penempatan AS penempatan,
+                u.emel AS emel_ahli, u.phone AS no_tel,
+                u.no_akaun_bank, u.nama_bank,
                 b.jenis_bantuan, b.keterangan, b.dokumen_sokongan,
                 b.status_permohonan, b.amaun_lulus, b.tarikh_mohon,
                 b.sebab_tolak, b.catatan_admin, b.diproses_oleh,
@@ -101,6 +103,7 @@ export const senaraiKebajikan = async (req, res) => {
                 b.bagi_pihak, b.pemohon_admin_no_kp,
                 b.nama_waris, b.no_kp_waris, b.hubungan_waris,
                 b.no_akaun_waris, b.nama_bank_waris,
+                b.resit_pembayaran, b.tarikh_bayaran,
                 pa.nama_pegawai AS nama_pemohon_admin
             FROM bantuan_kebajikan b
             JOIN users u ON b.no_kp = u.no_kp
@@ -166,26 +169,11 @@ export const kemaskiniStatusKebajikan = async (req, res) => {
         values.push(id);
         await conn.query(`UPDATE bantuan_kebajikan SET ${fields.join(', ')} WHERE id = ?`, values);
 
-        // Jika LULUS, rekodkan ke buku tunai secara automatik
-        if (status_permohonan === 'LULUS' && parseFloat(amaun_lulus) > 0) {
-            const [[bantuan]] = await conn.query('SELECT no_kp, jenis_bantuan FROM bantuan_kebajikan WHERE id = ?', [id]);
-            await conn.query(`
-                INSERT INTO transaksi_kewangan (jenis_aliran, kategori, amaun, rujukan, nota, no_kp_pihak, direkod_oleh)
-                VALUES ('KELUAR', 'KEBAJIKAN', ?, ?, ?, ?, ?)
-            `, [
-                amaun_lulus,
-                `BANTUAN-${id}`,
-                `Sumbangan Kelab: ${bantuan.jenis_bantuan}`,
-                bantuan.no_kp,
-                admin_no_kp
-            ]);
-        }
-
         await conn.commit();
 
         const msg = {
             DIKEMUKAKAN: 'Permohonan berjaya dikemukakan kepada Jawatankuasa.',
-            LULUS: 'Permohonan diluluskan dan direkod ke buku tunai.',
+            LULUS: 'Permohonan diluluskan. Sila muat naik resit pembayaran untuk merekod ke buku tunai.',
             DITOLAK: 'Permohonan telah ditolak.',
         };
         res.status(200).json({ success: true, message: msg[status_permohonan] || 'Berjaya dikemaskini.' });
@@ -199,7 +187,89 @@ export const kemaskiniStatusKebajikan = async (req, res) => {
 };
 
 // ==========================================
-// 1b. EDIT KANDUNGAN PERMOHONAN KEBAJIKAN
+// 1b. UPLOAD RESIT PEMBAYARAN KEBAJIKAN
+// ==========================================
+export const uploadResitBayaran = async (req, res) => {
+    const { id } = req.params;
+    const admin_no_kp = req.user?.no_kp || 'ADMIN';
+
+    const [[bantuan]] = await db.query(`
+        SELECT b.*, u.emel, u.nama_pegawai AS nama_penuh
+        FROM bantuan_kebajikan b
+        JOIN users u ON u.no_kp = b.no_kp
+        WHERE b.id = ?
+    `, [id]);
+
+    if (!bantuan)
+        return res.status(404).json({ success: false, message: 'Rekod tidak dijumpai.' });
+    if (bantuan.status_permohonan !== 'LULUS')
+        return res.status(400).json({ success: false, message: 'Hanya permohonan berstatus LULUS boleh dikemaskini dengan resit.' });
+    if (!req.file)
+        return res.status(400).json({ success: false, message: 'Fail resit pembayaran diperlukan.' });
+
+    const filename = req.file.filename;
+    const conn = await db.getConnection();
+    try {
+        await conn.beginTransaction();
+
+        await conn.query(`
+            UPDATE bantuan_kebajikan
+            SET resit_pembayaran = ?, tarikh_bayaran = NOW(), status_permohonan = 'SELESAI'
+            WHERE id = ?
+        `, [filename, id]);
+
+        await conn.query(`
+            INSERT INTO transaksi_kewangan
+                (jenis_aliran, kategori, amaun, rujukan, nota, no_kp_pihak, direkod_oleh, fail_dokumen)
+            VALUES ('KELUAR', 'KEBAJIKAN', ?, ?, ?, ?, ?, ?)
+        `, [
+            bantuan.amaun_lulus,
+            `BANTUAN-${id}`,
+            `Sumbangan Kelab: ${bantuan.jenis_bantuan}`,
+            bantuan.no_kp,
+            admin_no_kp,
+            JSON.stringify([filename]),
+        ]);
+
+        await conn.commit();
+
+        if (bantuan.emel) {
+            await sendEmail({
+                email: bantuan.emel,
+                subject: `Bantuan Kebajikan Telah Dibayar — ${bantuan.jenis_bantuan}`,
+                message: `
+                    <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;border:1px solid #eaeded;border-radius:8px;overflow:hidden;">
+                      <div style="background:#0F4C3A;padding:24px;text-align:center;">
+                        <h2 style="color:#fff;margin:0;font-size:18px;">Pembayaran Bantuan Kebajikan</h2>
+                      </div>
+                      <div style="padding:24px;">
+                        <p style="color:#2c3e50;">Assalamualaikum / Salam Sejahtera, <strong>${bantuan.nama_penuh}</strong>,</p>
+                        <p style="color:#2c3e50;">Kami dengan sukacitanya memaklumkan bahawa bayaran bantuan kebajikan bagi permohonan anda telah <strong style="color:#0F4C3A;">selesai diproses</strong>.</p>
+                        <table style="width:100%;border-collapse:collapse;margin:16px 0;background:#f8fffe;border-radius:8px;overflow:hidden;">
+                          <tr><td style="padding:10px 14px;font-size:12px;color:#666;border-bottom:1px solid #eee;">Jenis Bantuan</td><td style="padding:10px 14px;font-size:12px;font-weight:bold;color:#2c3e50;border-bottom:1px solid #eee;">${bantuan.jenis_bantuan}</td></tr>
+                          <tr><td style="padding:10px 14px;font-size:12px;color:#666;">Jumlah Dibayar</td><td style="padding:10px 14px;font-size:14px;font-weight:bold;color:#0F4C3A;">RM ${Number(bantuan.amaun_lulus).toFixed(2)}</td></tr>
+                        </table>
+                        <p style="color:#666;font-size:12px;">Resit pembayaran telah direkodkan dalam sistem. Jika ada sebarang pertanyaan, sila hubungi Bendahari atau Setiausaha Kelab.</p>
+                        <p style="color:#2c3e50;">Terima kasih kerana menjadi ahli yang aktif.</p>
+                      </div>
+                      ${footerEmelHTML()}
+                    </div>
+                `,
+            }).catch(err => console.error('[Email] Gagal hantar emel kebajikan SELESAI:', err.message));
+        }
+
+        res.json({ success: true, message: 'Resit berjaya dimuat naik. Buku tunai dikemaskini dan emel dihantar kepada pemohon.' });
+    } catch (err) {
+        await conn.rollback();
+        console.error('Ralat uploadResitBayaran:', err);
+        res.status(500).json({ success: false, message: 'Ralat pelayan semasa merekod resit.' });
+    } finally {
+        conn.release();
+    }
+};
+
+// ==========================================
+// 1c. EDIT KANDUNGAN PERMOHONAN KEBAJIKAN
 // ==========================================
 export const editKebajikan = async (req, res) => {
     const { id } = req.params;
@@ -835,7 +905,7 @@ export const getProfilSaya = async (req, res) => {
                 u.nama_pegawai AS nama_penuh, u.no_kp,
                 p.nama_penempatan AS nama_majikan, u.gred_penyandang_sspa AS gred_sspa,
                 u.emel AS email, u.phone AS no_tel, u.saiz_baju, u.gambar,
-                u.status_ahli, u.role, u.jawatan_kelab
+                u.status_ahli, u.role, u.jawatan_kelab, u.is_paid_override
             FROM users u
             LEFT JOIN penempatan p ON u.penempatan_id = p.id
             WHERE u.no_kp = ?
@@ -887,6 +957,26 @@ export const tukarKatalaluan = async (req, res) => {
         res.status(200).json({ success: true, message: "Kata laluan berjaya ditukar!" });
     } catch (error) {
         res.status(500).json({ success: false, message: "Ralat pada pelayan." });
+    }
+};
+
+export const kemaskiniTetapanAkunSendiri = async (req, res) => {
+    if (req.user.role !== 'Super Admin') {
+        return res.status(403).json({ success: false, message: 'Akses terhad kepada Super Admin sahaja.' });
+    }
+    const no_kp = req.user.no_kp;
+    const { jawatan_kelab, is_paid_override } = req.body;
+    try {
+        const fields = [];
+        const values = [];
+        if (jawatan_kelab !== undefined) { fields.push('jawatan_kelab = ?'); values.push(jawatan_kelab || null); }
+        if (is_paid_override !== undefined) { fields.push('is_paid_override = ?'); values.push(is_paid_override === null ? null : (is_paid_override ? 1 : 0)); }
+        if (!fields.length) return res.status(400).json({ success: false, message: 'Tiada maklumat untuk dikemaskini.' });
+        values.push(no_kp);
+        await db.query(`UPDATE users SET ${fields.join(', ')} WHERE no_kp = ?`, values);
+        res.json({ success: true, message: 'Tetapan akaun dikemaskini.' });
+    } catch (error) {
+        res.status(500).json({ success: false, message: 'Ralat pada pelayan.' });
     }
 };
 

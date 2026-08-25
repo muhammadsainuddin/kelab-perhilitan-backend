@@ -36,6 +36,10 @@ const runMigrations = async () => {
         `ALTER TABLE bantuan_kebajikan ADD COLUMN IF NOT EXISTS diproses_oleh VARCHAR(20) DEFAULT NULL`,
         `ALTER TABLE bantuan_kebajikan ADD COLUMN IF NOT EXISTS tarikh_dikemukakan DATETIME DEFAULT NULL`,
         `ALTER TABLE bantuan_kebajikan ADD COLUMN IF NOT EXISTS tarikh_keputusan DATETIME DEFAULT NULL`,
+        `ALTER TABLE bantuan_kebajikan ADD COLUMN IF NOT EXISTS resit_pembayaran VARCHAR(255) DEFAULT NULL`,
+        `ALTER TABLE bantuan_kebajikan ADD COLUMN IF NOT EXISTS tarikh_bayaran DATETIME DEFAULT NULL`,
+        `ALTER TABLE users ADD COLUMN IF NOT EXISTS is_paid_override TINYINT(1) DEFAULT NULL`,
+        `ALTER TABLE acara ADD COLUMN IF NOT EXISTS link_google_form VARCHAR(500) DEFAULT NULL`,
     ];
     for (const sql of migrations) {
         try { await db.query(sql); } catch (e) { /* kolum mungkin sudah wujud */ }

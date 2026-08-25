@@ -34,7 +34,8 @@ export const getMyProfile = async (req, res) => {
                 u.no_ahli,
                 u.gambar,
                 u.role,
-                u.jawatan_kelab
+                u.jawatan_kelab,
+                u.created_at AS tarikh_daftar
             FROM users u
             LEFT JOIN penempatan p ON u.penempatan_id = p.id
             WHERE u.no_kp = ?
@@ -132,7 +133,7 @@ export const getStatusBerhenti = async (req, res) => {
     const no_kp = req.user.no_kp;
     try {
         const [rows] = await db.query(
-            `SELECT id, status_permohonan, catatan_admin, sebab_berhenti, tarikh_mohon
+            `SELECT id, status_permohonan, catatan_admin, sebab_berhenti, tarikh_mohon, tarikh_berhenti
              FROM berhenti_ahli WHERE no_kp = ? ORDER BY tarikh_mohon DESC LIMIT 1`,
             [no_kp]
         );
@@ -144,7 +145,11 @@ export const getStatusBerhenti = async (req, res) => {
 
 export const applyResignation = async (req, res) => {
     const no_kp = req.user.no_kp;
-    const { sebab_berhenti } = req.body;
+    const { sebab_berhenti, tarikh_berhenti } = req.body;
+
+    if (!tarikh_berhenti) {
+        return res.status(400).json({ success: false, message: 'Tarikh berhenti wajib diisi.' });
+    }
 
     try {
         const [existing] = await db.query(
@@ -158,7 +163,10 @@ export const applyResignation = async (req, res) => {
             });
         }
 
-        await db.query(`INSERT INTO berhenti_ahli (no_kp, sebab_berhenti) VALUES (?, ?)`, [no_kp, sebab_berhenti]);
+        await db.query(
+            `INSERT INTO berhenti_ahli (no_kp, sebab_berhenti, tarikh_berhenti) VALUES (?, ?, ?)`,
+            [no_kp, sebab_berhenti, tarikh_berhenti]
+        );
 
         res.status(200).json({ success: true, message: "Permohonan berhenti telah dihantar kepada urusetia untuk semakan." });
     } catch (error) {

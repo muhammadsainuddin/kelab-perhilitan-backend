@@ -14,6 +14,7 @@ const pool = mysql.createPool({
     queueLimit: 0,
     supportBigNumbers: true,
     bigNumberStrings: false,
+    dateStrings: true,   // pulangkan DATE/DATETIME sebagai string, bukan JS Date object
 });
 
 // Convert callbacks to promises for easier async/await usage

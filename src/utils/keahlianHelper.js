@@ -54,6 +54,14 @@ export const janaNoAhliBaru = async () => {
  * @returns {Promise<boolean>}
  */
 export const semakStatusBerbayar = async (no_kp, jenis_potongan) => {
+    // Semak override Super Admin — jika ditetapkan, ia mengatasi semua peraturan
+    const [overrideRows] = await db.query(
+        `SELECT is_paid_override FROM users WHERE no_kp = ?`, [no_kp]
+    );
+    const override = overrideRows[0]?.is_paid_override;
+    if (override === 1) return true;
+    if (override === 0) return false;
+
     // Biro Angkasa sentiasa berbayar
     if (jenis_potongan === 'Potongan Biro angkasa') {
         return true;

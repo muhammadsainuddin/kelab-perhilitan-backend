@@ -92,7 +92,7 @@ export const senaraiAcaraAktif = async (req, res) => {
                 a.tarikh_acara, a.tarikh_tutup, a.poster,
                 a.emel_urusetia, a.no_tel_urusetia, a.status,
                 a.senarai_sukan, a.benarkan_pelbagai_sukan, a.had_peserta,
-                a.kategori_jantina,
+                a.kategori_jantina, a.link_google_form,
                 (SELECT COUNT(*) FROM penyertaan_acara p WHERE p.acara_id = a.id) AS jumlah_peserta,
                 EXISTS (
                     SELECT 1 FROM penyertaan_acara p2
@@ -205,7 +205,7 @@ export const ciptaAcara = async (req, res) => {
     const {
         nama_acara, jenis_acara, keterangan, lokasi,
         tarikh_acara, tarikh_tamat, tarikh_tutup, emel_urusetia, no_tel_urusetia,
-        senarai_sukan, benarkan_pelbagai_sukan, had_peserta, kategori_jantina
+        senarai_sukan, benarkan_pelbagai_sukan, had_peserta, kategori_jantina, link_google_form
     } = req.body;
 
     let posterString = null;
@@ -227,13 +227,13 @@ export const ciptaAcara = async (req, res) => {
 
         const [result] = await db.query(`
             INSERT INTO acara
-            (nama_acara, jenis_acara, keterangan, lokasi, tarikh_acara, tarikh_tamat, tarikh_tutup, poster, emel_urusetia, no_tel_urusetia, status, senarai_sukan, benarkan_pelbagai_sukan, had_peserta, kategori_jantina)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'AKTIF', ?, ?, ?, ?)
+            (nama_acara, jenis_acara, keterangan, lokasi, tarikh_acara, tarikh_tamat, tarikh_tutup, poster, emel_urusetia, no_tel_urusetia, status, senarai_sukan, benarkan_pelbagai_sukan, had_peserta, kategori_jantina, link_google_form)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'AKTIF', ?, ?, ?, ?, ?)
         `, [
             nama_acara, jenis_acara || null, keterangan || null, lokasi || null,
             tarikh_acara || null, tarikh_tamat || null, tarikh_tutup || null, posterString,
             emel_urusetia || null, no_tel_urusetia || null,
-            senaraiSukanStr, benarkanPelbagai, hadPesertaVal, kategoriJantina
+            senaraiSukanStr, benarkanPelbagai, hadPesertaVal, kategoriJantina, link_google_form || null
         ]);
 
         res.status(201).json({ success: true, message: "Acara berjaya dicipta!", id_acara: result.insertId });
@@ -266,7 +266,7 @@ export const kemaskiniAcara = async (req, res) => {
     const {
         nama_acara, jenis_acara, keterangan, lokasi,
         tarikh_acara, tarikh_tamat, tarikh_tutup, emel_urusetia, no_tel_urusetia, status,
-        senarai_sukan, benarkan_pelbagai_sukan, had_peserta, kategori_jantina
+        senarai_sukan, benarkan_pelbagai_sukan, had_peserta, kategori_jantina, link_google_form
     } = req.body;
 
     try {
@@ -300,11 +300,22 @@ export const kemaskiniAcara = async (req, res) => {
             fields.push('kategori_jantina = ?');
             values.push(['Lelaki', 'Perempuan'].includes(kategori_jantina) ? kategori_jantina : 'Semua');
         }
+        if (link_google_form !== undefined) {
+            fields.push('link_google_form = ?');
+            values.push(link_google_form || null);
+        }
 
         if (req.files && req.files.length > 0) {
+            // Gambar baru dimuat naik — gantikan semua
             const posterArray = req.files.map(f => f.filename);
             fields.push('poster = ?');
             values.push(JSON.stringify(posterArray));
+        } else if (req.body.gambar_kekal !== undefined) {
+            // Tiada gambar baru, tapi user ubah senarai gambar sedia ada
+            let kekal = [];
+            try { kekal = JSON.parse(req.body.gambar_kekal); } catch { kekal = []; }
+            fields.push('poster = ?');
+            values.push(kekal.length ? JSON.stringify(kekal) : null);
         }
 
         if (fields.length === 0) {

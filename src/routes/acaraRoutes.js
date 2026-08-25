@@ -18,7 +18,7 @@ import {
     cariAhliUntukAcara
 } from '../controllers/acaraController.js';
 import { verifyToken, requireRole } from '../middleware/authMiddleware.js';
-import { upload } from '../middleware/uploadMiddleware.js';
+import { uploadGambar, mampatGambar } from '../middleware/uploadMiddleware.js';
 
 const router = express.Router();
 
@@ -37,9 +37,9 @@ router.delete('/batal/:acara_id', batalSertai);     // batal pendaftaran
 // ------------------------------------------
 const adminOnly = requireRole(['Admin', 'Super Admin', 'Bendahari']);
 
-router.post('/admin/cipta',          adminOnly, upload.array('poster', 5), ciptaAcara);
+router.post('/admin/cipta',          adminOnly, uploadGambar('poster', 5), mampatGambar, ciptaAcara);
 router.get('/admin/semua',           adminOnly, senaraiSemuaAcara);
-router.put('/admin/kemaskini/:id',   adminOnly, upload.array('poster', 5), kemaskiniAcara);
+router.put('/admin/kemaskini/:id',   adminOnly, uploadGambar('poster', 5), mampatGambar, kemaskiniAcara);
 router.get('/admin/peserta/:id',     adminOnly, senaraiPesertaAcara);
 router.delete('/admin/padam/:id',    adminOnly, padamAcara);
 router.get('/admin/analisis/:id',    adminOnly, analisisAcara);

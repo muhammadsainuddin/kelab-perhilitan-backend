@@ -2,6 +2,7 @@ import express from 'express';
 import {
     senaraiKebajikan,
     kemaskiniStatusKebajikan,
+    uploadResitBayaran,
     editKebajikan,
     senaraiBerhentiAhli,
     kemaskiniBerhentiAhli,
@@ -20,6 +21,7 @@ import {
     getProfilSaya,
     kemaskiniProfilSaya,
     tukarKatalaluan,
+    kemaskiniTetapanAkunSendiri,
     getStatistikTunggakan,
     getAllResitBayaran,
     getDirektoriBersepadu,
@@ -52,7 +54,7 @@ import {
 } from '../controllers/resitController.js';
 
 import { verifyToken, requireRole } from '../middleware/authMiddleware.js';
-import { upload, uploadBantuan, uploadGambar, mampatGambar } from '../middleware/uploadMiddleware.js';
+import { upload, uploadBantuan, uploadKewangan, uploadGambar, mampatGambar } from '../middleware/uploadMiddleware.js';
 
 const router = express.Router();
 
@@ -65,6 +67,7 @@ router.use(verifyToken, requireRole(['Admin', 'Super Admin', 'Bendahari']));
 router.get('/profil-saya', getProfilSaya);
 router.put('/profil-saya', kemaskiniProfilSaya);
 router.put('/tukar-katalaluan', tukarKatalaluan);
+router.put('/tetapan-akaun-sendiri', kemaskiniTetapanAkunSendiri);
 
 // ------------------------------------------
 // PENGURUSAN AHLI
@@ -100,6 +103,7 @@ router.get('/resit-biro-angkasa/:no_resit',   detailResitBiro);
 // ------------------------------------------
 router.get('/kebajikan', senaraiKebajikan);
 router.put('/kebajikan/:id', kemaskiniStatusKebajikan);
+router.put('/kebajikan/:id/resit', uploadKewangan.single('resit'), uploadResitBayaran);
 router.put('/kebajikan/:id/edit', uploadBantuan.array('dokumen', 20), editKebajikan);
 router.get('/berhenti', senaraiBerhentiAhli);
 router.put('/berhenti/:id', kemaskiniBerhentiAhli);
