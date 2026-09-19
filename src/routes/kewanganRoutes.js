@@ -5,7 +5,7 @@ import expressK from 'express';
 import {
     getStatistikKewangan, getSenaraiTransaksi, rekodKeluar, eksportCSV,
     getPenyataTahunan, getSenaraiSumbangan, rekodSumbangan, importSumbanganBulk,
-    kemaskiniSumbangan, padamSumbangan, rekodTuntutanMakswip,
+    kemaskiniSumbangan, padamSumbangan, rekodTuntutanMakswip, kemaskiniTuntutanMakswip, padamTuntutanMakswip,
     getProdukLaris, getLaporanBulanan, getLaporanHarian, getLaporanKategori, rekodTransaksi,
     kemaskiniTransaksi, padamTransaksi, getLogEditTransaksi,
     getAcaraKhas, tambahAcaraKhas, kemaskiniAcaraKhas, getPenyataAcaraKhas,
@@ -35,6 +35,8 @@ routerK.post('/sumbangan/import',      importSumbanganBulk);
 routerK.put('/sumbangan/:id',          kemaskiniSumbangan);
 routerK.delete('/sumbangan/:id',       padamSumbangan);
 routerK.post('/tuntutan-makswip',      uploadTuntutan.single('fail_dokumen'), rekodTuntutanMakswip);
+routerK.put('/tuntutan-makswip/:id',   rR(['Admin', 'Super Admin']), uploadTuntutan.single('fail_dokumen'), kemaskiniTuntutanMakswip);
+routerK.delete('/tuntutan-makswip/:id', rR(['Admin', 'Super Admin']), padamTuntutanMakswip);
 
 // Rekod tunggal (masuk/keluar), laporan berkala, produk laris
 routerK.post('/rekod',            uploadKewangan.array('dokumen', 5), mampatGambar, rekodTransaksi);

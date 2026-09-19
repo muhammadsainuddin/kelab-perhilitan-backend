@@ -454,7 +454,7 @@ export const buatBilSumbanganFPX = async (req, res) => {
 
         const isAnon      = anon === true || anon === 'true' || anon === 1 || anon === '1';
         const totalBayar  = nilaiAmaun + 1; // +RM1 caj FPX
-        const BACKEND_URL = process.env.BACKEND_URL || 'http://localhost:5001';
+        const BACKEND_URL = process.env.BACKEND_URL || 'http://localhost:5002';
         const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:5173';
 
         // Ambil category code sumbangan dari tetapan DB

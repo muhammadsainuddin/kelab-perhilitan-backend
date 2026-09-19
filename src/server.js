@@ -154,7 +154,7 @@ app.use('/api/sokongan', sokonganRoutes);
 
 app.use(errorLogger);
 
-const PORT = process.env.PORT || 5001;
+const PORT = process.env.PORT || 5002;
 app.listen(PORT, async () => {
     console.log(`🛸 AIGEO Core sedang berjalan di port ${PORT}`);
     await runMigrations();

@@ -150,7 +150,10 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
             WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'transaksi_kewangan'
             AND COLUMN_NAME = 'kategori'
         `);
-        if (colKategori && !colKategori.COLUMN_TYPE.includes('ACARA_KHAS')) {
+        // Jalankan migrasi ENUM ini hanya pada skema lama. Skema baharu memakai
+        // VARCHAR supaya kategori tersuai boleh disimpan; menukarnya semula
+        // kepada ENUM akan menolak kod sedia ada seperti YURAN_FPX.
+        if (colKategori && String(colKategori.COLUMN_TYPE).toLowerCase().startsWith('enum') && !colKategori.COLUMN_TYPE.includes('ACARA_KHAS')) {
             await db.query(`
                 ALTER TABLE transaksi_kewangan
                 MODIFY COLUMN kategori ENUM(
@@ -608,6 +611,7 @@ export const getSenaraiSumbangan = async (req, res) => {
         const [sejarahTuntutan] = await db.query(`
             SELECT t.id, t.nama_acara, t.jumlah_kasar, t.potongan, t.jumlah_bersih,
                    DATE_FORMAT(t.tarikh_tuntutan, '%d-%m-%Y') AS tarikh_tuntutan,
+                   DATE_FORMAT(t.tarikh_tuntutan, '%Y-%m-%d') AS tarikh_tuntutan_raw,
                    t.nota, t.fail_dokumen, t.tarikh_rekod, t.acara_khas_id,
                    a.nama AS nama_acara_khas,
                    t.direkod_oleh, dr.nama_pegawai AS nama_direkod_oleh
@@ -1635,5 +1639,90 @@ export const getLaporanPerbelanjaanAcara = async (req, res) => {
     } catch (e) {
         console.error('[LAPORAN] getLaporanPerbelanjaanAcara:', e.message);
         return res.status(500).json({ success: false, message: 'Ralat menjana laporan perbelanjaan acara.' });
+    }
+};
+
+// ==========================================
+// 8c. TUNTUTAN MAKSWIP — KEMASKINI / PADAM
+// Rekod tuntutan sentiasa diselaraskan dengan transaksi ledger pautannya.
+// ==========================================
+export const kemaskiniTuntutanMakswip = async (req, res) => {
+    const { id } = req.params;
+    const { acara_khas_id, tarikh_tuntutan, jumlah_bersih, nota } = req.body;
+    const acaraId = parseInt(acara_khas_id);
+    const jumlahBersih = parseFloat(jumlah_bersih);
+    if (!acaraId || !tarikh_tuntutan || !jumlahBersih || jumlahBersih <= 0) {
+        return res.status(400).json({ success: false, message: 'Acara, tarikh dan jumlah bersih yang sah diperlukan.' });
+    }
+
+    const conn = await db.getConnection();
+    try {
+        await conn.beginTransaction();
+        const [[tuntutan]] = await conn.query('SELECT * FROM tuntutan_makswip WHERE id = ? FOR UPDATE', [id]);
+        if (!tuntutan) {
+            await conn.rollback();
+            return res.status(404).json({ success: false, message: 'Rekod tuntutan tidak dijumpai.' });
+        }
+        const [[acara]] = await conn.query('SELECT nama FROM acara_khas WHERE id = ?', [acaraId]);
+        if (!acara) {
+            await conn.rollback();
+            return res.status(400).json({ success: false, message: 'Acara khas tidak dijumpai.' });
+        }
+        const [[{ kasar, bil }]] = await conn.query(
+            'SELECT COALESCE(SUM(amaun), 0) AS kasar, COUNT(*) AS bil FROM kutipan_sumbangan_luar WHERE acara_khas_id = ?',
+            [acaraId]
+        );
+        const jumlahKasar = parseFloat(parseFloat(kasar).toFixed(2));
+        const potongan = parseFloat(Math.max(0, jumlahKasar - jumlahBersih).toFixed(2));
+        const failDokumen = req.file ? `/uploads/tuntutan/${req.file.filename}` : tuntutan.fail_dokumen;
+        const notaTeks = nota || null;
+        const notaLedger = `Tuntutan MAKSWIP — ${acara.nama}. Sumbangan dikutip: RM ${jumlahKasar.toFixed(2)} (${bil} penyumbang). Bersih diterima: RM ${jumlahBersih.toFixed(2)}.${notaTeks ? ` ${notaTeks}` : ''}`;
+
+        await conn.query(`
+            UPDATE tuntutan_makswip
+            SET nama_acara = ?, jumlah_kasar = ?, potongan = ?, jumlah_bersih = ?,
+                tarikh_tuntutan = ?, nota = ?, fail_dokumen = ?, acara_khas_id = ?
+            WHERE id = ?
+        `, [acara.nama, jumlahKasar, potongan, jumlahBersih, tarikh_tuntutan, notaTeks, failDokumen, acaraId, id]);
+
+        if (tuntutan.id_transaksi) {
+            await conn.query(`
+                UPDATE transaksi_kewangan
+                SET amaun = ?, rujukan = ?, nota = ?, penerima_bayaran = 'MAKSWIP',
+                    tarikh_transaksi = ?, acara_khas_id = ?
+                WHERE id = ?
+            `, [jumlahBersih, `TUNTUTAN-MAKSWIP-${id}`, notaLedger, tarikh_tuntutan, acaraId, tuntutan.id_transaksi]);
+        }
+        await conn.commit();
+        return res.json({ success: true, message: 'Tuntutan MAKSWIP dan rekod ledger berjaya dikemaskini.' });
+    } catch (error) {
+        await conn.rollback();
+        console.error('[KEWANGAN] Gagal kemaskini tuntutan MAKSWIP:', error.message);
+        return res.status(500).json({ success: false, message: 'Ralat mengemaskini tuntutan.' });
+    } finally {
+        conn.release();
+    }
+};
+
+export const padamTuntutanMakswip = async (req, res) => {
+    const { id } = req.params;
+    const conn = await db.getConnection();
+    try {
+        await conn.beginTransaction();
+        const [[tuntutan]] = await conn.query('SELECT id, id_transaksi FROM tuntutan_makswip WHERE id = ? FOR UPDATE', [id]);
+        if (!tuntutan) {
+            await conn.rollback();
+            return res.status(404).json({ success: false, message: 'Rekod tuntutan tidak dijumpai.' });
+        }
+        if (tuntutan.id_transaksi) await conn.query('DELETE FROM transaksi_kewangan WHERE id = ?', [tuntutan.id_transaksi]);
+        await conn.query('DELETE FROM tuntutan_makswip WHERE id = ?', [id]);
+        await conn.commit();
+        return res.json({ success: true, message: 'Tuntutan MAKSWIP dan transaksi ledger berkaitan berjaya dipadam.' });
+    } catch (error) {
+        await conn.rollback();
+        console.error('[KEWANGAN] Gagal padam tuntutan MAKSWIP:', error.message);
+        return res.status(500).json({ success: false, message: 'Ralat memadam tuntutan.' });
+    } finally {
+        conn.release();
     }
 };

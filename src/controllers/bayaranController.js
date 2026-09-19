@@ -59,7 +59,7 @@ export const ciptaBil = async (req, res) => {
         if (finalAmaun <= 0) return res.status(400).json({ success: false, message: "Ralat: Jumlah bayaran tidak sah (RM0.00)." });
 
         const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
-        const backendUrl  = process.env.BACKEND_URL  || 'http://localhost:5001';
+        const backendUrl  = process.env.BACKEND_URL  || 'http://localhost:5002';
         
         const fpxData = await janaBilFPX({
             keterangan: keterangan,

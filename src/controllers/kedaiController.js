@@ -34,15 +34,17 @@ import { prosesKedaiBerjaya } from '../utils/paymentSync.js';
             )
         `);
 
-        // Pastikan kolum kategori dalam transaksi_kewangan ada semua nilai yang diperlukan
+        // Kategori kewangan menyokong kod tersuai. Pangkalan data lama mungkin
+        // masih menggunakan ENUM; tukar sekali kepada VARCHAR tanpa menyempitkan
+        // nilai sedia ada (yang boleh menyebabkan "Data truncated").
         const [[colKat]] = await db.query(`
             SELECT COLUMN_TYPE FROM INFORMATION_SCHEMA.COLUMNS
             WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'transaksi_kewangan' AND COLUMN_NAME = 'kategori'
         `);
-        if (colKat && !colKat.COLUMN_TYPE.includes("'BELIAN_BARANG'")) {
+        if (colKat && String(colKat.COLUMN_TYPE).toLowerCase().startsWith('enum')) {
             await db.query(`
                 ALTER TABLE transaksi_kewangan
-                MODIFY COLUMN kategori ENUM('YURAN','KEDAI','KEBAJIKAN','SUMBANGAN','OPERASI','BELIAN_BARANG','PERKHIDMATAN','ACARA','LAIN-LAIN')
+                MODIFY COLUMN kategori VARCHAR(50) NULL
             `);
         }
 
@@ -374,7 +376,7 @@ export const buatPesanan = async (req, res) => {
         // ── PANGGIL MODUL PUSAT TOYYIBPAY ──
         const [[ahli]] = await conn.query('SELECT nama_pegawai, emel, phone FROM users WHERE no_kp = ?', [no_kp]);
         const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
-        const backendUrl  = process.env.BACKEND_URL  || 'http://localhost:5001';
+        const backendUrl  = process.env.BACKEND_URL  || 'http://localhost:5002';
 
         const fpxData = await janaBilFPX({
             keterangan: `Pesanan Kedai #${pesananId} - Kelab Perhilitan`,
