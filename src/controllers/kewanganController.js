@@ -284,7 +284,17 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
             ('SUMBANGAN_AHLI',   'Sumbangan Ahli',        'MASUK',  1, 4,  1),
             ('YURAN_FPX',        'Yuran Kelab (FPX)',     'MASUK',  1, 5,  1),
             ('KOS_OPERASI_FPX',  'Kos Operasi (FPX)',     'KELUAR', 1, 20, 1),
-            ('KUTIPAN_PENAJAAN', 'Kutipan Penajaan (Makswip)', 'MASUK', 1, 6, 1)
+            ('KUTIPAN_PENAJAAN', 'Kutipan Penajaan (Makswip)', 'MASUK', 1, 6, 1),
+            ('GERAN_JABATAN',    'Geran Jabatan',          'MASUK', 1, 7,  1),
+            ('PELABURAN',        'Pelaburan Kelab',        'MASUK', 1, 8,  1),
+            ('DERMA_KEBAJIKAN',  'Kutipan Derma Kebajikan Ahli', 'MASUK', 1, 9, 1),
+            ('JUALAN_AIR',       'Jualan Air Minuman',     'MASUK', 1, 10, 1),
+            ('JUALAN_TSHIRT',    'Jualan T-shirt Kelab',   'MASUK', 1, 11, 1),
+            ('JUALAN_SAMPUL_RAYA','Jualan Sampul Raya',    'MASUK', 1, 12, 1),
+            ('JUALAN_LAIN',      'Hasil Jualan Lain-lain', 'MASUK', 1, 13, 1),
+            ('PEROLEHAN_ASET',   'Perolehan Aset Kelab',   'KELUAR', 1, 30, 1),
+            ('GERAN_NEGERI',     'Geran kepada PERHILITAN Negeri', 'KELUAR', 1, 31, 1),
+            ('BAYARAN_AKTIVITI_AM', 'Bayaran Aktiviti dan Am', 'KELUAR', 1, 32, 1)
         `).catch(() => {});
 
         // Migrasi v9: kategori KELUAR baharu (sukan/program)
