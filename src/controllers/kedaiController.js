@@ -1,6 +1,7 @@
 import db from '../config/db.js';
 import { janaBilFPX, semakTransaksiBil } from '../utils/toyyibpay.js';
 import { prosesKedaiBerjaya } from '../utils/paymentSync.js';
+import { toyyibPayAktif, responsToyyibPayDitutup } from '../utils/systemSettings.js';
 
 // Migrasi DB — jalankan sekali semasa server mula
 (async () => {
@@ -339,6 +340,12 @@ export const buatPesanan = async (req, res) => {
         const jumlahTotal = jumlah + kos_pos;
         const kaedah = kaedah_penghantaran === 'POS' ? 'POS' : 'PTJ';
         const alamat  = (kaedah === 'POS' && alamat_penghantaran) ? alamat_penghantaran.trim() : null;
+
+        // Tempahan percuma kekal dibenarkan; hanya bayaran baharu ToyyibPay disekat.
+        if (jumlah > 0 && !(await toyyibPayAktif())) {
+            await conn.rollback();
+            return responsToyyibPayDitutup(res);
+        }
 
         const [pRes] = await conn.query(
             'INSERT INTO pesanan_kedai (no_kp, jumlah_keseluruhan, is_percuma, kaedah_penghantaran, alamat_penghantaran, kos_postage) VALUES (?, ?, ?, ?, ?, ?)',

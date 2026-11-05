@@ -12,6 +12,7 @@ import {
     padamAcara,
     padamPesertaAcara,
     kemaskiniPergerakanPeserta,
+    kemaskiniBilanganOrang,
     analisisAcara,
     kemaskiniJersi,
     tambahPesertaAdmin,
@@ -47,6 +48,7 @@ router.put('/admin/jersi',           adminOnly, kemaskiniJersi);
 router.post('/admin/tambah-peserta',    adminOnly, tambahPesertaAdmin);
 router.delete('/admin/padam-peserta/:id',      adminOnly, padamPesertaAcara);
 router.put('/admin/pergerakan-peserta/:id',   adminOnly, kemaskiniPergerakanPeserta);
+router.put('/admin/bilangan-orang/:id',        adminOnly, kemaskiniBilanganOrang);
 router.get('/admin/cari-ahli',               adminOnly, cariAhliUntukAcara);
 
 export default router;

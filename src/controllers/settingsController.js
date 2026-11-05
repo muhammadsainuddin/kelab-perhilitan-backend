@@ -21,6 +21,7 @@ import { invalidateMaintenanceCache } from '../middleware/maintenanceMiddleware.
             ['modul_kedai',      1, 'Kedai Merchandise'],
             ['modul_bantuan',    1, 'Bantuan Kebajikan'],
             ['modul_acara',      1, 'Acara & Aktiviti'],
+            ['toyyibpay_enabled', 1, 'Pembayaran ToyyibPay'],
             ['maintenance_mode', 0, 'Mod Penyelenggaraan'],
         ];
         for (const [kunci, nilai, label] of defaults) {

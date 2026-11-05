@@ -23,6 +23,7 @@ const deriveJantina = (no_kp) => {
             `ALTER TABLE penyertaan_acara ADD COLUMN masa_penerbangan_pergi VARCHAR(10) NULL`,
             `ALTER TABLE penyertaan_acara ADD COLUMN no_penerbangan_balik VARCHAR(20) NULL`,
             `ALTER TABLE penyertaan_acara ADD COLUMN masa_penerbangan_balik VARCHAR(10) NULL`,
+            `ALTER TABLE penyertaan_acara ADD COLUMN bilangan_orang INT NOT NULL DEFAULT 1`,
         ];
         for (const sql of migrations) {
             try { await db.query(sql); } catch (e) { if (e.code !== 'ER_DUP_FIELDNAME') throw e; }
@@ -93,7 +94,8 @@ export const senaraiAcaraAktif = async (req, res) => {
                 a.emel_urusetia, a.no_tel_urusetia, a.status,
                 a.senarai_sukan, a.benarkan_pelbagai_sukan, a.had_peserta,
                 a.kategori_jantina, a.link_google_form,
-                (SELECT COUNT(*) FROM penyertaan_acara p WHERE p.acara_id = a.id) AS jumlah_peserta,
+                (SELECT COUNT(*) FROM penyertaan_acara p WHERE p.acara_id = a.id) AS jumlah_pendaftaran,
+                (SELECT COALESCE(SUM(GREATEST(COALESCE(p.bilangan_orang, 1), 1)), 0) FROM penyertaan_acara p WHERE p.acara_id = a.id) AS jumlah_orang,
                 EXISTS (
                     SELECT 1 FROM penyertaan_acara p2
                     WHERE p2.acara_id = a.id AND p2.no_kp = ?
@@ -105,7 +107,10 @@ export const senaraiAcaraAktif = async (req, res) => {
 
         const data = acara.map(a => ({
             ...a,
-            acara_penuh: a.had_peserta !== null && Number(a.jumlah_peserta) >= Number(a.had_peserta),
+            jumlah_pendaftaran: Number(a.jumlah_pendaftaran),
+            jumlah_orang: Number(a.jumlah_orang),
+            jumlah_peserta: Number(a.jumlah_orang), // alias keserasian paparan lama
+            acara_penuh: a.had_peserta !== null && Number(a.jumlah_orang) >= Number(a.had_peserta),
             jantina_sesuai: a.kategori_jantina === 'Semua' || a.kategori_jantina === jantinaSaya
         }));
 
@@ -119,7 +124,8 @@ export const senaraiAcaraAktif = async (req, res) => {
 // A2. Ahli daftar acara
 export const sertaiAcara = async (req, res) => {
     const no_kp = req.user.no_kp;
-    const { acara_id, kategori, catatan, sukan_dipilih } = req.body;
+    const { acara_id, kategori, catatan, sukan_dipilih, bilangan_orang } = req.body;
+    const bilanganOrang = Math.max(1, parseInt(bilangan_orang) || 1);
 
     try {
         const [[userRow]] = await db.query(`SELECT jenis_potongan, jantina FROM users WHERE no_kp = ?`, [no_kp]);
@@ -130,14 +136,15 @@ export const sertaiAcara = async (req, res) => {
 
         const [[acara]] = await db.query(
             `SELECT id, status, tarikh_tutup, benarkan_pelbagai_sukan, had_peserta, kategori_jantina,
-             (SELECT COUNT(*) FROM penyertaan_acara WHERE acara_id = a.id) AS jumlah_peserta
+             (SELECT COALESCE(SUM(GREATEST(COALESCE(bilangan_orang, 1), 1)), 0) FROM penyertaan_acara WHERE acara_id = a.id) AS jumlah_orang
              FROM acara a WHERE id = ?`, [acara_id]
         );
         if (!acara) return res.status(404).json({ success: false, message: "Acara tidak dijumpai." });
         if (acara.status !== 'AKTIF') return res.status(400).json({ success: false, message: "Pendaftaran ditutup." });
 
-        if (acara.had_peserta !== null && Number(acara.jumlah_peserta) >= Number(acara.had_peserta)) {
-            return res.status(400).json({ success: false, message: "Maaf, pendaftaran acara ini telah penuh." });
+        if (acara.had_peserta !== null && Number(acara.jumlah_orang) + bilanganOrang > Number(acara.had_peserta)) {
+            const baki = Math.max(0, Number(acara.had_peserta) - Number(acara.jumlah_orang));
+            return res.status(400).json({ success: false, message: `Baki tempat hanya ${baki} orang.` });
         }
 
         // Semak jantina
@@ -162,8 +169,8 @@ export const sertaiAcara = async (req, res) => {
 
         const sukanDipilihStr = sukan_dipilih ? JSON.stringify(sukan_dipilih) : null;
         await db.query(
-            `INSERT INTO penyertaan_acara (acara_id, no_kp, kategori, catatan, sukan_dipilih, jantina) VALUES (?, ?, ?, ?, ?, ?)`,
-            [acara_id, no_kp, kategori || null, catatan || null, sukanDipilihStr, jantinaPeserta]
+            `INSERT INTO penyertaan_acara (acara_id, no_kp, kategori, catatan, sukan_dipilih, jantina, bilangan_orang) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+            [acara_id, no_kp, kategori || null, catatan || null, sukanDipilihStr, jantinaPeserta, bilanganOrang]
         );
 
         res.status(201).json({ success: true, message: "Pendaftaran acara berjaya direkodkan!" });
@@ -249,11 +256,18 @@ export const senaraiSemuaAcara = async (req, res) => {
         const [acara] = await db.query(`
             SELECT
                 a.*,
-                (SELECT COUNT(*) FROM penyertaan_acara p WHERE p.acara_id = a.id) AS jumlah_peserta
+                (SELECT COUNT(*) FROM penyertaan_acara p WHERE p.acara_id = a.id) AS jumlah_pendaftaran,
+                (SELECT COALESCE(SUM(GREATEST(COALESCE(p.bilangan_orang, 1), 1)), 0) FROM penyertaan_acara p WHERE p.acara_id = a.id) AS jumlah_orang
             FROM acara a
             ORDER BY a.created_at DESC
         `);
-        res.status(200).json({ success: true, data: acara });
+        const data = acara.map(a => ({
+            ...a,
+            jumlah_pendaftaran: Number(a.jumlah_pendaftaran),
+            jumlah_orang: Number(a.jumlah_orang),
+            jumlah_peserta: Number(a.jumlah_orang),
+        }));
+        res.status(200).json({ success: true, data });
     } catch (error) {
         console.error("Ralat Senarai Semua Acara:", error);
         res.status(500).json({ success: false, message: "Ralat menarik senarai acara." });
@@ -339,6 +353,7 @@ export const senaraiPesertaAcara = async (req, res) => {
         const [peserta] = await db.query(`
             SELECT
                 p.id, p.kategori, p.catatan, p.tarikh_daftar, p.sukan_dipilih,
+                GREATEST(COALESCE(p.bilangan_orang, 1), 1) AS bilangan_orang,
                 COALESCE(p.jantina, u.jantina) AS jantina,
                 u.no_kp, u.nama_pegawai, u.gred_penyandang_sspa AS gred_sspa,
                 u.emel AS email, u.phone AS no_tel, u.no_ahli, u.saiz_baju,
@@ -355,7 +370,8 @@ export const senaraiPesertaAcara = async (req, res) => {
             ORDER BY p.tarikh_daftar ASC
         `, [id]);
 
-        res.status(200).json({ success: true, count: peserta.length, data: peserta });
+        const jumlahOrang = peserta.reduce((jumlah, p) => jumlah + Number(p.bilangan_orang || 1), 0);
+        res.status(200).json({ success: true, count: peserta.length, jumlah_pendaftaran: peserta.length, jumlah_orang: jumlahOrang, data: peserta });
     } catch (error) {
         console.error("Ralat Senarai Peserta:", error);
         res.status(500).json({ success: false, message: "Ralat menarik senarai peserta." });
@@ -420,6 +436,39 @@ export const kemaskiniPergerakanPeserta = async (req, res) => {
     }
 };
 
+// B4d. Kemaskini jumlah orang di bawah satu pendaftaran
+export const kemaskiniBilanganOrang = async (req, res) => {
+    const { id } = req.params;
+    const bilanganOrang = parseInt(req.body.bilangan_orang);
+    if (!Number.isInteger(bilanganOrang) || bilanganOrang < 1) {
+        return res.status(400).json({ success: false, message: 'Bilangan orang mestilah sekurang-kurangnya 1.' });
+    }
+
+    try {
+        const [[rekod]] = await db.query(`
+            SELECT p.id, p.acara_id, a.had_peserta,
+                   COALESCE(SUM(CASE WHEN lain.id <> p.id THEN GREATEST(COALESCE(lain.bilangan_orang, 1), 1) ELSE 0 END), 0) AS jumlah_orang_lain
+            FROM penyertaan_acara p
+            JOIN acara a ON a.id = p.acara_id
+            LEFT JOIN penyertaan_acara lain ON lain.acara_id = p.acara_id
+            WHERE p.id = ?
+            GROUP BY p.id, p.acara_id, a.had_peserta
+        `, [id]);
+        if (!rekod) return res.status(404).json({ success: false, message: 'Pendaftaran tidak dijumpai.' });
+
+        if (rekod.had_peserta !== null && Number(rekod.jumlah_orang_lain) + bilanganOrang > Number(rekod.had_peserta)) {
+            const baki = Math.max(0, Number(rekod.had_peserta) - Number(rekod.jumlah_orang_lain));
+            return res.status(400).json({ success: false, message: `Bilangan maksimum untuk pendaftaran ini ialah ${baki} orang.` });
+        }
+
+        await db.query('UPDATE penyertaan_acara SET bilangan_orang = ? WHERE id = ?', [bilanganOrang, id]);
+        return res.status(200).json({ success: true, message: 'Bilangan orang berjaya dikemaskini.' });
+    } catch (error) {
+        console.error('Ralat Kemaskini Bilangan Orang:', error);
+        return res.status(500).json({ success: false, message: 'Gagal mengemaskini bilangan orang.' });
+    }
+};
+
 // B5. Padam acara (akan padam penyertaan juga melalui ON DELETE CASCADE)
 export const padamAcara = async (req, res) => {
     const { id } = req.params;
@@ -448,6 +497,7 @@ export const analisisAcara = async (req, res) => {
             SELECT
                 p.id AS penyertaan_id,
                 p.sukan_dipilih,
+                GREATEST(COALESCE(p.bilangan_orang, 1), 1) AS bilangan_orang,
                 p.no_jersi,
                 COALESCE(p.jantina, u.jantina) AS jantina,
                 u.no_kp, u.nama_pegawai, u.gred_penyandang_sspa AS gred,
@@ -484,6 +534,7 @@ export const analisisAcara = async (req, res) => {
         peserta.forEach(p => {
             const sukan = safeArr(p.sukan_dipilih);
             const kategori = isPegawai(p.gred) ? 'pegawai' : 'sokongan';
+            const bilanganOrang = Math.max(1, Number(p.bilangan_orang || 1));
             const rekod = {
                 penyertaan_id: p.penyertaan_id,
                 no_kp: p.no_kp,
@@ -493,19 +544,20 @@ export const analisisAcara = async (req, res) => {
                 saiz_baju: p.saiz_baju || '—',
                 no_ahli: p.no_ahli || '—',
                 penempatan: p.penempatan || '—',
+                bilangan_orang: bilanganOrang,
                 kategori,
                 no_jersi_map: typeof p.no_jersi === 'string' ? (() => { try { return JSON.parse(p.no_jersi); } catch { return {}; } })() : (p.no_jersi || {})
             };
 
             if (sukan.length === 0) {
-                perSukan['_umum'].jumlah++;
-                perSukan['_umum'][kategori]++;
+                perSukan['_umum'].jumlah += bilanganOrang;
+                perSukan['_umum'][kategori] += bilanganOrang;
                 perSukan['_umum'].peserta.push({ ...rekod, no_jersi: rekod.no_jersi_map['_umum'] || '' });
             } else {
                 sukan.forEach(s => {
                     if (!perSukan[s]) perSukan[s] = { sukan: s, jumlah: 0, pegawai: 0, sokongan: 0, peserta: [] };
-                    perSukan[s].jumlah++;
-                    perSukan[s][kategori]++;
+                    perSukan[s].jumlah += bilanganOrang;
+                    perSukan[s][kategori] += bilanganOrang;
                     perSukan[s].peserta.push({ ...rekod, no_jersi: rekod.no_jersi_map[s] || '' });
                 });
             }
@@ -529,7 +581,9 @@ export const analisisAcara = async (req, res) => {
             data: {
                 acara: { id: acara.id, nama_acara: acara.nama_acara, jenis_acara: acara.jenis_acara, tarikh_acara: acara.tarikh_acara },
                 ringkasan: {
-                    jumlah_peserta: peserta.length,
+                    jumlah_pendaftaran: peserta.length,
+                    jumlah_orang: peserta.reduce((jumlah, p) => jumlah + Number(p.bilangan_orang || 1), 0),
+                    jumlah_peserta: peserta.reduce((jumlah, p) => jumlah + Number(p.bilangan_orang || 1), 0),
                     pegawai: jumlahPegawai,
                     sokongan: peserta.length - jumlahPegawai,
                     lelaki: jumlahLelaki,
@@ -572,7 +626,8 @@ export const kemaskiniJersi = async (req, res) => {
 
 // B8. Admin tambah peserta secara manual (walaupun belum bayar yuran)
 export const tambahPesertaAdmin = async (req, res) => {
-    const { acara_id, no_kp, kategori, sukan_dipilih } = req.body;
+    const { acara_id, no_kp, kategori, sukan_dipilih, bilangan_orang } = req.body;
+    const bilanganOrang = Math.max(1, parseInt(bilangan_orang) || 1);
     if (!acara_id || !no_kp) {
         return res.status(400).json({ success: false, message: "acara_id dan no_kp wajib diisi." });
     }
@@ -580,10 +635,15 @@ export const tambahPesertaAdmin = async (req, res) => {
     try {
         // Semak acara wujud
         const [[acara]] = await db.query(
-            `SELECT id, status, had_peserta, (SELECT COUNT(*) FROM penyertaan_acara WHERE acara_id = a.id) AS jumlah_peserta
+            `SELECT id, status, had_peserta,
+             (SELECT COALESCE(SUM(GREATEST(COALESCE(bilangan_orang, 1), 1)), 0) FROM penyertaan_acara WHERE acara_id = a.id) AS jumlah_orang
              FROM acara a WHERE id = ?`, [acara_id]
         );
         if (!acara) return res.status(404).json({ success: false, message: "Acara tidak dijumpai." });
+        if (acara.had_peserta !== null && Number(acara.jumlah_orang) + bilanganOrang > Number(acara.had_peserta)) {
+            const baki = Math.max(0, Number(acara.had_peserta) - Number(acara.jumlah_orang));
+            return res.status(400).json({ success: false, message: `Baki tempat hanya ${baki} orang.` });
+        }
 
         // Semak ahli wujud
         const [[user]] = await db.query(`SELECT no_kp, nama_pegawai, jantina FROM users WHERE no_kp = ?`, [no_kp]);
@@ -596,8 +656,8 @@ export const tambahPesertaAdmin = async (req, res) => {
         const jantinaPeserta = user.jantina || deriveJantina(no_kp);
         const sukanDipilihStr = sukan_dipilih && sukan_dipilih.length > 0 ? JSON.stringify(sukan_dipilih) : null;
         await db.query(
-            `INSERT INTO penyertaan_acara (acara_id, no_kp, kategori, sukan_dipilih, jantina) VALUES (?, ?, ?, ?, ?)`,
-            [acara_id, no_kp, kategori || null, sukanDipilihStr, jantinaPeserta]
+            `INSERT INTO penyertaan_acara (acara_id, no_kp, kategori, sukan_dipilih, jantina, bilangan_orang) VALUES (?, ?, ?, ?, ?, ?)`,
+            [acara_id, no_kp, kategori || null, sukanDipilihStr, jantinaPeserta, bilanganOrang]
         );
 
         res.status(201).json({ success: true, message: `${user.nama_pegawai} berjaya didaftarkan.` });

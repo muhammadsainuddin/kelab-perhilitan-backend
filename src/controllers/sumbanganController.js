@@ -3,6 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { janaBilFPX, semakTransaksiBil } from '../utils/toyyibpay.js';
+import { toyyibPayAktif, responsToyyibPayDitutup } from '../utils/systemSettings.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname  = path.dirname(__filename);
@@ -433,6 +434,8 @@ export const hapusGambarKempen = async (req, res) => {
 
 export const buatBilSumbanganFPX = async (req, res) => {
     try {
+        if (!(await toyyibPayAktif())) return responsToyyibPayDitutup(res);
+
         const no_kp = req.user.no_kp;
         const { kempen_id } = req.params;
         const { amaun, catatan, anon } = req.body;

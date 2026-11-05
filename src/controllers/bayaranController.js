@@ -1,6 +1,7 @@
 import db from '../config/db.js';
 import { janaBilFPX, semakTransaksiBil } from '../utils/toyyibpay.js';
 import { prosesYuranBerjaya } from '../utils/paymentSync.js';
+import { toyyibPayAktif, responsToyyibPayDitutup } from '../utils/systemSettings.js';
 
 // ==========================================
 // 1. CIPTA BIL YURAN
@@ -12,6 +13,8 @@ export const ciptaBil = async (req, res) => {
     let { keterangan, amaun, jenis_bayaran } = req.body; 
 
     try {
+        if (!(await toyyibPayAktif())) return responsToyyibPayDitutup(res);
+
         // --- SEMAKAN TRANSAKSI PENDING (Tanpa Auto-Cancel) ---
         const [pendingBills] = await db.query(`
             SELECT billCode, TIMESTAMPDIFF(MINUTE, tarikh_cipta, NOW()) as minit_berlalu 

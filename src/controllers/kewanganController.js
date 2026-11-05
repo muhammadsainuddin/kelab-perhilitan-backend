@@ -552,6 +552,79 @@ export const getPenyataTahunan = async (req, res) => {
         const jumlahPendapatan  = pendapatan.reduce((a, b) => a + b.jumlah, 0);
         const jumlahPerbelanjaan = perbelanjaan.reduce((a, b) => a + b.jumlah, 0);
 
+        // Pecahan lengkap mengikut skop supaya pendapatan dan perbelanjaan
+        // operasi biasa tidak bercampur dengan transaksi acara khas.
+        const [pecahanSkop] = await db.query(`
+            SELECT
+                CASE WHEN acara_khas_id IS NULL THEN 'BIASA' ELSE 'ACARA' END AS skop,
+                jenis_aliran, kategori, SUM(amaun) AS jumlah, COUNT(*) AS bil
+            FROM transaksi_kewangan
+            WHERE YEAR(tarikh_transaksi) = ?
+            GROUP BY skop, jenis_aliran, kategori
+            ORDER BY skop, jenis_aliran, jumlah DESC
+        `, [tahun]);
+        const normalisasiPecahan = (skop, jenis) => pecahanSkop
+            .filter(r => r.skop === skop && r.jenis_aliran === jenis)
+            .map(r => ({
+                kategori: r.kategori,
+                jumlah: parseFloat(r.jumlah),
+                bil: parseInt(r.bil),
+            }));
+
+        const pendapatanBiasa = normalisasiPecahan('BIASA', 'MASUK');
+        const perbelanjaanBiasa = normalisasiPecahan('BIASA', 'KELUAR');
+        const pendapatanAcara = normalisasiPecahan('ACARA', 'MASUK');
+        const perbelanjaanAcara = normalisasiPecahan('ACARA', 'KELUAR');
+
+        const jumlahPendapatanBiasa = pendapatanBiasa.reduce((a, b) => a + b.jumlah, 0);
+        const jumlahPerbelanjaanBiasa = perbelanjaanBiasa.reduce((a, b) => a + b.jumlah, 0);
+        const jumlahPendapatanAcara = pendapatanAcara.reduce((a, b) => a + b.jumlah, 0);
+        const jumlahPerbelanjaanAcara = perbelanjaanAcara.reduce((a, b) => a + b.jumlah, 0);
+
+        // Siri bulanan digunakan oleh graf dashboard untuk kedua-dua skop.
+        const [rekodBulanan] = await db.query(`
+            SELECT
+                MONTH(tarikh_transaksi) AS bulan,
+                CASE WHEN acara_khas_id IS NULL THEN 'BIASA' ELSE 'ACARA' END AS skop,
+                COALESCE(SUM(CASE WHEN jenis_aliran = 'MASUK' THEN amaun ELSE 0 END), 0) AS jumlah_masuk,
+                COALESCE(SUM(CASE WHEN jenis_aliran = 'KELUAR' THEN amaun ELSE 0 END), 0) AS jumlah_keluar
+            FROM transaksi_kewangan
+            WHERE YEAR(tarikh_transaksi) = ?
+            GROUP BY bulan, skop
+            ORDER BY bulan ASC
+        `, [tahun]);
+        const binaTrend = skop => Array.from({ length: 12 }, (_, indeks) => {
+            const bulan = indeks + 1;
+            const rekod = rekodBulanan.find(r => r.skop === skop && parseInt(r.bulan) === bulan);
+            return {
+                bulan,
+                jumlah_masuk: rekod ? parseFloat(rekod.jumlah_masuk) : 0,
+                jumlah_keluar: rekod ? parseFloat(rekod.jumlah_keluar) : 0,
+            };
+        });
+
+        // Ringkasan setiap acara khas bagi tahun dipilih. Syarat tahun diletakkan
+        // pada JOIN supaya acara tanpa transaksi masih dipaparkan dengan nilai sifar.
+        const [acaraKhas] = await db.query(`
+            SELECT
+                a.id, a.nama, a.deskripsi, a.status, a.tarikh_mula, a.tarikh_tamat,
+                COUNT(t.id) AS bil_transaksi,
+                COALESCE(SUM(CASE WHEN t.jenis_aliran = 'MASUK' THEN t.amaun END), 0) AS jumlah_masuk,
+                COALESCE(SUM(CASE WHEN t.jenis_aliran = 'KELUAR' THEN t.amaun END), 0) AS jumlah_keluar
+            FROM acara_khas a
+            LEFT JOIN transaksi_kewangan t
+              ON t.acara_khas_id = a.id
+             AND YEAR(t.tarikh_transaksi) = ?
+            GROUP BY a.id
+            ORDER BY a.status ASC, a.tarikh_mula DESC, a.id DESC
+        `, [tahun]);
+        const acaraKhasNormal = acaraKhas.map(a => ({
+            ...a,
+            bil_transaksi: parseInt(a.bil_transaksi),
+            jumlah_masuk: parseFloat(a.jumlah_masuk),
+            jumlah_keluar: parseFloat(a.jumlah_keluar),
+            baki: parseFloat(a.jumlah_masuk) - parseFloat(a.jumlah_keluar),
+        }));
         // Baki bawa ke hadapan (semua tahun sebelum tahun dipilih)
         const [[bawaResult]] = await db.query(`
             SELECT
@@ -567,6 +640,17 @@ export const getPenyataTahunan = async (req, res) => {
             data: {
                 tahun: parseInt(tahun),
                 pendapatan, perbelanjaan,
+                pendapatan_biasa: pendapatanBiasa,
+                perbelanjaan_biasa: perbelanjaanBiasa,
+                pendapatan_acara: pendapatanAcara,
+                perbelanjaan_acara: perbelanjaanAcara,
+                jumlah_pendapatan_biasa: jumlahPendapatanBiasa,
+                jumlah_perbelanjaan_biasa: jumlahPerbelanjaanBiasa,
+                jumlah_pendapatan_acara: jumlahPendapatanAcara,
+                acara_khas: acaraKhasNormal,
+                jumlah_perbelanjaan_acara: jumlahPerbelanjaanAcara,
+                trend_biasa: binaTrend('BIASA'),
+                trend_acara: binaTrend('ACARA'),
                 jumlah_pendapatan: jumlahPendapatan,
                 jumlah_perbelanjaan: jumlahPerbelanjaan,
                 lebihan_kurangan: jumlahPendapatan - jumlahPerbelanjaan,
